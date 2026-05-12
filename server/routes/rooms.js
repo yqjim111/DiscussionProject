@@ -47,4 +47,36 @@ router.get('/:code', async (req, res) => {
   }
 });
 
+// DELETE /api/rooms/:code — end a session (deletes room + groups, clears Redis)
+router.delete('/:code', async (req, res) => {
+  const { code } = req.params;
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
+
+  try {
+    // Fetch groups so we can clean Redis keys
+    const { rows: groups } = await pool.query(
+      `SELECT g.id FROM groups g JOIN rooms r ON g.room_id = r.id WHERE r.code = $1`,
+      [code]
+    );
+
+    // Delete room (cascades to groups via FK)
+    await pool.query('DELETE FROM rooms WHERE code = $1', [code]);
+
+    // Clean up Redis keys for each group
+    const { getClient } = require('../services/redis');
+    const redis = await getClient();
+    for (const g of groups) {
+      await redis.del(`group:${g.id}:transcript`);
+      await redis.del(`group:${g.id}:summary`);
+      await redis.del(`group:${g.id}:lastUpdated`);
+      await redis.del(`group:${g.id}:lastSummaryTime`);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/rooms/:code', err.message);
+    res.status(500).json({ error: 'Failed to delete room' });
+  }
+});
+
 module.exports = router;

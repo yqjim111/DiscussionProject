@@ -1,19 +1,22 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'next/navigation';
-import { getGroups, generateOverallSummary, type Group } from '@/lib/api';
+import { useParams, useRouter } from 'next/navigation';
+import { getGroups, generateOverallSummary, deleteRoom, type Group } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 import GroupCard from '@/components/GroupCard';
 
 export default function InstructorDashboard() {
   const params = useParams();
+  const router = useRouter();
   const roomCode = params.roomCode as string;
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [overallSummary, setOverallSummary] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [loadingOverall, setLoadingOverall] = useState(false);
+  const [loadingEnd, setLoadingEnd] = useState(false);
   const [error, setError] = useState('');
 
   const loadGroups = useCallback(async () => {
@@ -43,10 +46,18 @@ export default function InstructorDashboard() {
       });
     });
 
+    // Warn before accidental browser close / tab close
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
       clearInterval(poll);
       socket.off('group:summary:update');
       socket.off('group:created');
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [roomCode, loadGroups]);
 
@@ -76,6 +87,20 @@ export default function InstructorDashboard() {
     });
   }
 
+  async function handleEndSession() {
+    setLoadingEnd(true);
+    try {
+      await deleteRoom(roomCode);
+      // Remove the beforeunload warning so navigation is clean
+      window.onbeforeunload = null;
+      router.push('/instructor/create');
+    } catch {
+      setError('Failed to end session. Try again.');
+      setLoadingEnd(false);
+    }
+    setShowEndConfirm(false);
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -90,7 +115,7 @@ export default function InstructorDashboard() {
               </span>
             </p>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-3">
             <button
               onClick={handleGenerateOverall}
               disabled={loadingOverall || groups.length === 0}
@@ -99,9 +124,16 @@ export default function InstructorDashboard() {
             >
               {loadingOverall ? 'Generating…' : 'Generate Overall Summary'}
             </button>
-            {error && <p className="text-red-500 text-xs">{error}</p>}
+            <button
+              onClick={() => setShowEndConfirm(true)}
+              className="px-6 py-2.5 bg-red-600 text-white font-semibold rounded-xl
+                         hover:bg-red-700 transition-colors text-sm"
+            >
+              End Session
+            </button>
           </div>
         </div>
+        {error && <p className="text-center text-red-500 text-xs mt-1">{error}</p>}
       </header>
 
       {/* Group grid */}
@@ -138,6 +170,37 @@ export default function InstructorDashboard() {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* End session confirmation */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-8 text-center">
+            <p className="text-4xl mb-4">⚠️</p>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">End this session?</h2>
+            <p className="text-gray-500 text-sm mb-6">
+              This permanently deletes the room, all groups, and all transcripts.
+              Students will no longer be able to use this room code.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowEndConfirm(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700
+                           font-semibold rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEndSession}
+                disabled={loadingEnd}
+                className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white
+                           font-semibold rounded-xl transition-colors disabled:opacity-50"
+              >
+                {loadingEnd ? 'Ending…' : 'Yes, End Session'}
+              </button>
+            </div>
           </div>
         </div>
       )}

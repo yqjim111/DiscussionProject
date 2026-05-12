@@ -54,3 +54,7 @@ export function transcribeAudio(formData: FormData): Promise<{ transcript: strin
 export function generateOverallSummary(roomCode: string): Promise<{ summary: string }> {
   return request(`/api/rooms/${roomCode}/summary`, { method: 'POST' });
 }
+
+export function deleteRoom(roomCode: string): Promise<{ ok: boolean }> {
+  return request(`/api/rooms/${roomCode}`, { method: 'DELETE' });
+}

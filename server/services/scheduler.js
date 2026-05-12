@@ -45,8 +45,38 @@ async function runSummarizationCycle() {
   }
 }
 
+// Delete rooms older than 24 hours and clean their Redis keys
+async function cleanupOldRooms() {
+  try {
+    const { rows: groups } = await pool.query(
+      `SELECT g.id FROM groups g
+       JOIN rooms r ON g.room_id = r.id
+       WHERE r.created_at < NOW() - INTERVAL '24 hours'`
+    );
+
+    const { rows: rooms } = await pool.query(
+      `DELETE FROM rooms WHERE created_at < NOW() - INTERVAL '24 hours' RETURNING code`
+    );
+
+    if (rooms.length === 0) return;
+
+    const redisClient = await redis.getClient();
+    for (const g of groups) {
+      await redisClient.del(`group:${g.id}:transcript`);
+      await redisClient.del(`group:${g.id}:summary`);
+      await redisClient.del(`group:${g.id}:lastUpdated`);
+      await redisClient.del(`group:${g.id}:lastSummaryTime`);
+    }
+
+    console.log(`Auto-cleaned ${rooms.length} expired room(s)`);
+  } catch (err) {
+    console.error('Room cleanup error:', err.message);
+  }
+}
+
 function startScheduler() {
   setInterval(runSummarizationCycle, 30_000);
+  setInterval(cleanupOldRooms, 60 * 60 * 1000); // run every hour
   console.log('Summarization scheduler started — running every 30s');
 }
 
