@@ -21,15 +21,18 @@ const server = http.createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+// Allow the production URL + any Vercel preview deployments
+const corsOrigin = [FRONTEND_URL, /\.vercel\.app$/, 'http://localhost:3000'];
+
 const io = new Server(server, {
-  cors: { origin: FRONTEND_URL, methods: ['GET', 'POST'] },
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
   transports: ['websocket', 'polling'],
 });
 
 // Make io accessible from route handlers
 app.set('io', io);
 
-app.use(cors({ origin: FRONTEND_URL }));
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 // Health check — used by Railway to confirm the server is alive
