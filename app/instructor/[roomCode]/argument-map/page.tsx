@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { getRoom, type Room } from '@/lib/api';
 import Script from 'next/script';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string };
@@ -27,14 +28,21 @@ export default function ArgumentMapPage() {
   const container = useRef<HTMLDivElement>(null);
   const cy = useRef<any>(null);
   const [ready, setReady] = useState(false);
-  const [topic, setTopic] = useState('');
-  const [instructions, setInstructions] = useState('');
-  const [token, setToken] = useState('');
+  const [room, setRoom] = useState<Room | null>(null);
+  const [roomError, setRoomError] = useState('');
   const [graph, setGraph] = useState<Graph | null>(null);
   const [groupFilter, setGroupFilter] = useState('*');
   const [details, setDetails] = useState<null | { title: string; paragraphs: string[]; quotes: { meta: string; quote: string }[] }>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    getRoom(roomCode)
+      .then(({ room }) => { if (!cancelled) setRoom(room); })
+      .catch(() => { if (!cancelled) setRoomError('Unable to load session information.'); });
+    return () => { cancelled = true; };
+  }, [roomCode]);
 
   useEffect(() => {
     if (!graph || !ready || !window.cytoscape || !container.current) return;
@@ -99,16 +107,16 @@ export default function ArgumentMapPage() {
 
   async function generate() {
     setError('');
-    if (!topic.trim() || !token.trim()) {
-      setError('Teacher topic and demo access token are required.');
+    if (!room?.teacher_topic) {
+      setError('This room has no saved discussion topic. Create a new session with a topic.');
       return;
     }
     setLoading(true);
     try {
       const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/argument-map', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-argument-map-token': token.trim() },
-        body: JSON.stringify({ teacher_topic: topic.trim(), discussion_instructions: instructions.trim() })
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to analyze discussion');
@@ -142,22 +150,19 @@ export default function ArgumentMapPage() {
       </header>
       <div className="max-w-screen-2xl mx-auto grid lg:grid-cols-[320px_minmax(0,1fr)] gap-5">
         <section className="bg-white border border-slate-200 rounded-xl p-5 h-fit space-y-4">
-          <h2 className="font-bold">Discussion analysis</h2>
-          <p className="text-xs text-slate-500">Uses the original group transcripts in this room. No copy/paste needed.</p>
-          <label className="block text-sm font-medium">Teacher topic *
-            <textarea className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" rows={3} value={topic} onChange={e => setTopic(e.target.value)} placeholder="Discussion question or theme" />
-          </label>
-          <label className="block text-sm font-medium">Discussion instructions (optional)
-            <textarea className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" rows={3} value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="Specific discussion tasks" />
-          </label>
-          <label className="block text-sm font-medium">Demo access token *
-            <input type="password" autoComplete="off" className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" value={token} onChange={e => setToken(e.target.value)} placeholder="ARGUMENT_MAP_ACCESS_TOKEN" />
-          </label>
-          <button type="button" disabled={loading} onClick={generate} className="w-full rounded-lg bg-indigo-600 text-white font-semibold px-4 py-3 disabled:opacity-50">
+          <h2 className="font-bold">Session information</h2>
+          {roomError && <p role="alert" className="text-red-700 text-sm">{roomError}</p>}
+          <div className="text-sm space-y-3">
+            <div><strong>Teacher Topic</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.teacher_topic || 'No topic saved for this room'}</p></div>
+            <div><strong>Discussion Instructions</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.discussion_instructions || 'None provided'}</p></div>
+            <div><strong>Planned Duration</strong><p className="mt-1 text-slate-600">{room?.duration_minutes ? room.duration_minutes + ' minutes' : 'Not recorded'}</p></div>
+          </div>
+          <p className="text-xs text-slate-500">The analysis uses saved session information and original group transcripts. No additional fields are required.</p>
+          <button type="button" disabled={loading || !room?.teacher_topic} onClick={generate} className="w-full rounded-lg bg-indigo-600 text-white font-semibold px-4 py-3 disabled:opacity-50">
             {loading ? 'Analyzing discussion…' : 'Generate Argument Map'}
           </button>
           {error && <p role="alert" className="text-red-700 text-sm break-words">{error}</p>}
-          <p className="text-xs text-slate-500">Transcript data will be sent to the configured AI provider. Use only authorized or anonymized classroom data. Access token is held in page state, not saved.</p>
+          <p className="text-xs text-slate-500">Transcript data will be sent to the configured AI provider. Use only authorized or anonymized classroom data.</p>
         </section>
         <section className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 min-w-0">
           <div className="flex flex-wrap gap-3 items-center justify-between mb-4">
