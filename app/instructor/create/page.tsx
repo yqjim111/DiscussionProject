@@ -37,9 +37,9 @@ export default function InstructorCreate() {
   }
 
   async function handleCreate() {
-    if (!topic.trim() || topic.length > 1500 || instructions.length > 5000 ||
+    if (!topic.trim() || !instructorName.trim() || topic.length > 1500 || instructions.length > 5000 ||
       !Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 180) {
-      setError('Enter a topic and a valid duration between 1 and 180 minutes.');
+      setError('Enter your instructor name, a topic and a valid duration between 1 and 180 minutes.');
       return;
     }
     setLoading(true);
@@ -112,7 +112,7 @@ export default function InstructorCreate() {
         {!roomCode ? (
           <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-6 text-left space-y-4">
             <label className="block text-sm font-semibold text-gray-700">
-              Instructor Name (optional)
+              Instructor Name *
               <input
                 className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
                 maxLength={255}
