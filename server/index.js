@@ -11,6 +11,7 @@ const cors = require('cors');
 const roomRoutes = require('./routes/rooms');
 const groupRoutes = require('./routes/groups');
 const transcribeRoute = require('./routes/transcribe');
+const argumentMapRoute = require('./routes/argumentMap');
 const scheduler = require('./services/scheduler');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
@@ -42,6 +43,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use('/api/rooms', roomRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/transcribe', transcribeRoute);
+app.use('/api/rooms', argumentMapRoute);
 
 // POST /api/rooms/:code/summary — synthesize all group summaries for a room
 app.post('/api/rooms/:code/summary', async (req, res) => {
