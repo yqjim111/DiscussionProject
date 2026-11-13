@@ -14,6 +14,7 @@ export interface Room {
   code: string;
   created_at: string;
   teacher_topic: string | null;
+  instructor_name: string | null;
   discussion_instructions: string;
   duration_minutes: number | null;
 }
@@ -36,6 +37,7 @@ export function loginInstructor(pin: string): Promise<{ authenticated: boolean }
 
 export function createRoom(data: {
   teacher_topic: string;
+  instructor_name: string;
   discussion_instructions: string;
   duration_minutes: number;
 }): Promise<{ room: Room }> {
