@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS groups (
 
 CREATE INDEX IF NOT EXISTS idx_rooms_code ON rooms(code);
 CREATE INDEX IF NOT EXISTS idx_groups_room_id ON groups(room_id);
+
+-- Backward-compatible session metadata: existing room rows remain valid.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS teacher_topic TEXT;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions TEXT NOT NULL DEFAULT '';
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
