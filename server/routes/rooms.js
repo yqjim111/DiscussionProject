@@ -13,9 +13,9 @@ router.post('/', requireInstructor, async (req, res) => {
   const teacherTopic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
   const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
   const duration = req.body?.duration_minutes;
-  if (!teacherTopic || teacherTopic.length > 1500 || instructorName.length > 255 || instructions.length > 5000
+  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000
     || !Number.isInteger(duration) || duration < 1 || duration > 180) {
-    return res.status(400).json({ error: 'A topic, optional instructions and duration (1-180 min) are required' });
+    return res.status(400).json({ error: 'Instructor name, topic and duration (1-180 min) are required; instructions are optional' });
   }
   try {
     let code;
