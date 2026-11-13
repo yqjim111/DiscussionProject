@@ -82,7 +82,7 @@ app.post('/api/rooms/:code/summary', requireInstructor, async (req, res) => {
 // GET /api/rooms/:code/report — read previously generated results; no new AI calls
 app.get('/api/rooms/:code/report', requireInstructor, async (req, res) => {
   const { code } = req.params;
-  if (!/^\\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
   try {
     const roomResult = await pool.query(
       'SELECT code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at FROM rooms WHERE code = $1',
