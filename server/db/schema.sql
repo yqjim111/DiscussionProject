@@ -21,3 +21,5 @@ CREATE INDEX IF NOT EXISTS idx_groups_room_id ON groups(room_id);
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS teacher_topic TEXT;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions TEXT NOT NULL DEFAULT '';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
+
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS instructor_name TEXT;
