@@ -88,17 +88,25 @@ export default function SessionReportPage() {
       ],
       layout: { name: 'cose', animate: false, fit: true, padding: 45, numIter: 750 },
     });
-    diagram.one('layoutstop', () => {
+    let disposed = false;
+    const capture = () => {
+      if (disposed) return;
       try {
         diagram.fit(undefined, 45);
-        setMapImage(diagram.png({ full: true, scale: 1.8, bg: '#ffffff' }));
+        const png = diagram.png({ full: true, scale: 1.8, bg: '#ffffff' });
+        if (png) setMapImage(png);
       } catch {
         setMapImage(null);
       }
-    });
-    // Cytoscape can finish layout synchronously before listeners attach.
-    if (!diagram.elements().length) setMapImage(null);
-    return () => { diagram.destroy(); };
+    };
+    diagram.on('layoutstop', capture);
+    // Layout can finish synchronously during initialization; also capture after the first paint.
+    const frame = requestAnimationFrame(capture);
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      diagram.destroy();
+    };
   }, [cyReady, report]);
 
   function printPDF() {
