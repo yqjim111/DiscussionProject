@@ -118,6 +118,12 @@ export default function InstructorDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <Link
+              href={`/instructor/${roomCode}/report`}
+              className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm"
+            >
+              Export PDF
+            </Link>
+            <Link
               href={`/instructor/${roomCode}/argument-map`}
               className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-colors text-sm"
             >
