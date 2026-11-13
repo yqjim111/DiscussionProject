@@ -40,17 +40,35 @@ function cookieSettings(req) {
 }
 
 async function login(req, res) {
-  const expected = instructorPIN();
-  if (!expected) return res.status(503).json({ error: 'Instructor authentication is not configured' });
-  if (!constantTimeMatch(req.body?.pin, expected)) return res.status(401).json({ error: 'Incorrect instructor PIN' });
-  const sessionId = crypto.randomBytes(32).toString('hex');
-  const key = 'instructor:session:' + crypto.createHash('sha256').update(sessionId).digest('hex');
-  const client = await redis.getClient();
-  await client.set(key, 'instructor', { EX: TTL_SECONDS });
-  const pieces = cookieSettings(req);
-  pieces[0] += sessionId;
-  res.setHeader('Set-Cookie', pieces.join('; '));
-  return res.json({ authenticated: true });
+  try {
+    const expected = instructorPIN();
+    if (!expected) return res.status(503).json({ error: 'Instructor authentication is not configured' });
+
+    const client = await redis.getClient();
+    // Limited failed attempts reduce PIN guessing against this demo endpoint.
+    const addressKey = crypto.createHash('sha256').update(String(req.ip || 'unknown')).digest('hex');
+    const attemptsKey = 'instructor:failed-login:' + addressKey;
+    const attempts = Number((await client.get(attemptsKey)) || '0');
+    if (attempts >= 10) {
+      return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    }
+    if (!constantTimeMatch(req.body?.pin, expected)) {
+      const count = await client.incr(attemptsKey);
+      if (count === 1) await client.expire(attemptsKey, 900);
+      return res.status(401).json({ error: 'Incorrect instructor PIN' });
+    }
+    await client.del(attemptsKey);
+    const sessionId = crypto.randomBytes(32).toString('hex');
+    const key = 'instructor:session:' + crypto.createHash('sha256').update(sessionId).digest('hex');
+    await client.set(key, 'instructor', { EX: TTL_SECONDS });
+    const pieces = cookieSettings(req);
+    pieces[0] += sessionId;
+    res.setHeader('Set-Cookie', pieces.join('; '));
+    return res.json({ authenticated: true });
+  } catch (error) {
+    console.error('Instructor authentication error:', error.message);
+    return res.status(500).json({ error: 'Instructor authentication temporarily unavailable' });
+  }
 }
 
 async function requireInstructor(req, res, next) {
