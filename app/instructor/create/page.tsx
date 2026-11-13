@@ -2,9 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createRoom } from '@/lib/api';
+import { createRoom, loginInstructor } from '@/lib/api';
 
-const INSTRUCTOR_PIN = process.env.NEXT_PUBLIC_INSTRUCTOR_PIN || '0000';
 
 export default function InstructorCreate() {
   const router = useRouter();
@@ -15,22 +14,41 @@ export default function InstructorCreate() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState(15);
+  const [authLoading, setAuthLoading] = useState(false);
 
-  function handlePinSubmit() {
-    if (pin === INSTRUCTOR_PIN) {
+  async function handlePinSubmit() {
+    if (!pin.trim()) return;
+    setAuthLoading(true);
+    setPinError('');
+    try {
+      await loginInstructor(pin);
       setUnlocked(true);
-      setPinError('');
-    } else {
-      setPinError('Incorrect PIN. Ask your administrator.');
       setPin('');
+    } catch {
+      setPinError('Incorrect PIN or unable to authenticate. Ask your administrator.');
+      setPin('');
+    } finally {
+      setAuthLoading(false);
     }
   }
 
   async function handleCreate() {
+    if (!topic.trim() || topic.length > 1500 || instructions.length > 5000 ||
+      !Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 180) {
+      setError('Enter a topic and a valid duration between 1 and 180 minutes.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const { room } = await createRoom();
+      const { room } = await createRoom({
+        teacher_topic: topic.trim(),
+        discussion_instructions: instructions.trim(),
+        duration_minutes: durationMinutes,
+      });
       setRoomCode(room.code);
       setTimeout(() => router.push(`/instructor/${room.code}`), 3000);
     } catch {
@@ -61,7 +79,7 @@ export default function InstructorCreate() {
             maxLength={8}
             value={pin}
             onChange={(e) => { setPin(e.target.value); setPinError(''); }}
-            onKeyDown={(e) => e.key === 'Enter' && handlePinSubmit()}
+            onKeyDown={(e) => e.key === 'Enter' && void handlePinSubmit()}
             placeholder="••••"
             className="w-full px-4 py-4 text-center text-2xl border-2 border-gray-200 rounded-xl
                        focus:border-indigo-500 focus:outline-none mb-4 tracking-widest"
@@ -71,11 +89,11 @@ export default function InstructorCreate() {
 
           <button
             onClick={handlePinSubmit}
-            disabled={pin.length === 0}
+            disabled={pin.length === 0 || authLoading}
             className="w-full py-4 bg-indigo-600 text-white text-lg font-semibold rounded-xl
                        hover:bg-indigo-700 disabled:opacity-40 transition-colors"
           >
-            Continue
+            {authLoading ? 'Signing in…' : 'Continue'}
           </button>
         </div>
       </main>
@@ -90,17 +108,50 @@ export default function InstructorCreate() {
         <p className="text-gray-500 mb-10">Create a room and share the code with your students.</p>
 
         {!roomCode ? (
-          <>
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-6 text-left space-y-4">
+            <label className="block text-sm font-semibold text-gray-700">
+              Discussion Topic *
+              <textarea
+                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
+                rows={3}
+                maxLength={1500}
+                placeholder="Overall topic or discussion question"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm font-semibold text-gray-700">
+              Discussion Instructions (optional)
+              <textarea
+                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
+                rows={4}
+                maxLength={5000}
+                placeholder="Questions, subtopics, or ordered discussion tasks"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm font-semibold text-gray-700">
+              Duration (minutes) *
+              <input
+                type="number"
+                min={1}
+                max={180}
+                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              />
+            </label>
             <button
               onClick={handleCreate}
               disabled={loading}
-              className="px-14 py-5 bg-indigo-600 text-white text-xl font-semibold rounded-2xl
-                         hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-lg"
+              className="w-full px-6 py-4 bg-indigo-600 text-white text-lg font-semibold rounded-xl
+                         hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               {loading ? 'Creating room…' : 'Create Room'}
             </button>
             {error && <p className="mt-4 text-red-500 text-sm">{error}</p>}
-          </>
+          </div>
         ) : (
           <div className="bg-white rounded-2xl shadow-xl p-10">
             <p className="text-gray-500 mb-2 text-sm uppercase tracking-widest font-medium">
