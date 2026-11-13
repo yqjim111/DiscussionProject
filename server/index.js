@@ -16,28 +16,36 @@ const scheduler = require('./services/scheduler');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
 const pool = require('./db/pool');
+const { login } = require('./services/instructorAuth');
 
 const app = express();
 const server = http.createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-// Allow the production URL + any Vercel preview deployments
-const corsOrigin = [FRONTEND_URL, /\.vercel\.app$/, 'http://localhost:3000'];
+// Restrict credentialed API calls to explicitly configured frontends.
+const corsOrigin = [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];
 
 const io = new Server(server, {
-  cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'], credentials: true },
   transports: ['websocket', 'polling'],
 });
 
 // Make io accessible from route handlers
 app.set('io', io);
 
-app.use(cors({ origin: corsOrigin }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
+// Reject cross-origin browser writes from sources outside the approved frontend list.
+app.use((req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  if (origin && !corsOrigin.includes(origin)) return res.status(403).json({ error: 'Origin not allowed' });
+  next();
+});
 app.use(express.json());
 
 // Health check — used by Railway to confirm the server is alive
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.post('/api/instructor/login', login);
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/rooms', roomRoutes);
