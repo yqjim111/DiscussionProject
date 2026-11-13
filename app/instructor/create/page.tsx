@@ -15,6 +15,7 @@ export default function InstructorCreate() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [topic, setTopic] = useState('');
+  const [instructorName, setInstructorName] = useState('');
   const [instructions, setInstructions] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(15);
   const [authLoading, setAuthLoading] = useState(false);
@@ -46,6 +47,7 @@ export default function InstructorCreate() {
     try {
       const { room } = await createRoom({
         teacher_topic: topic.trim(),
+        instructor_name: instructorName.trim(),
         discussion_instructions: instructions.trim(),
         duration_minutes: durationMinutes,
       });
@@ -109,6 +111,16 @@ export default function InstructorCreate() {
 
         {!roomCode ? (
           <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-6 text-left space-y-4">
+            <label className="block text-sm font-semibold text-gray-700">
+              Instructor Name (optional)
+              <input
+                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
+                maxLength={255}
+                placeholder="Name to include in the PDF report"
+                value={instructorName}
+                onChange={(e) => setInstructorName(e.target.value)}
+              />
+            </label>
             <label className="block text-sm font-semibold text-gray-700">
               Discussion Topic *
               <textarea
