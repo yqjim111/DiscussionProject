@@ -46,7 +46,10 @@ router.post('/:code/argument-map', requireInstructor, async (req, res) => {
       return res.status(413).json({ error: 'Transcript too long for this demo. Use global chunking; do not truncate.' });
     }
     const graph = await analyzeArgumentMap({ topic: teacherTopic, instructions, groups: usable });
-    res.json({ ...graph, groups: usable.map(g => ({ id: g.id, name: g.name })) });
+    const payload = { ...graph, groups: usable.map(g => ({ id: g.id, name: g.name })) };
+    const client = await redis.getClient();
+    await client.set(`room:${code}:argumentMap`, JSON.stringify(payload));
+    res.json(payload);
   } catch (error) {
     console.error('POST argument-map:', error.message);
     res.status(500).json({ error: 'Unable to generate a validated Argument Map. Check server logs.' });
