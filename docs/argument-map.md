@@ -20,9 +20,9 @@ The feature is an instructor-triggered action and does not replace the existing 
 ## Data flow
 
 1. A room collects speech-to-text transcripts in Redis as part of the existing ClassDiscuss pipeline.
-2. The instructor opens **Argument Map** from their room dashboard, enters the teacher topic and optional discussion instructions, and supplies the demonstration access token.
-3. The browser sends a POST to `/api/rooms/:code/argument-map` on the existing Express backend.
-4. The server obtains group IDs/names from PostgreSQL and **original transcripts** from Redis. It does not construct the graph from generated summaries.
+2. The instructor signs in through the existing Instructor Portal and creates a room with a **Teacher Topic**, optional **Discussion Instructions**, and a planned **Duration**. These values are saved in PostgreSQL.
+3. The instructor opens **Argument Map** from the room dashboard. The browser sends a POST to `/api/rooms/:code/argument-map` on the existing Express backend.
+4. The server verifies the instructor's server-side session, loads the room's saved topic and instructions plus group IDs/names from PostgreSQL, and reads **original transcripts** from Redis. It does not construct the graph from generated summaries.
 5. The model receives the saved Argument Map specification, the topic, instructions, and group-labelled transcripts. The implementation requests strict JSON containing `nodes` and `edges`.
 6. The server rejects structurally invalid outputs, unsupported node/edge types, missing source quotations, and duplicate unordered node pairs.
 7. The browser displays one node and one edge per validated JSON record. Clicking a node or edge reveals its authentic source records or edge justification.
@@ -34,22 +34,29 @@ Use the existing local project setup documented in the repository README.
 Configure the following environment variables in the backend's environment file (typically `.env.local` for local development):
 
 ```env
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=...
+INSTRUCTOR_PIN=replace-with-a-private-instructor-pin
 ARGUMENT_MAP_MODEL=gpt-4o-mini
-ARGUMENT_MAP_ACCESS_TOKEN=replace-with-a-long-random-secret
+NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
+FRONTEND_URL=http://localhost:3000
 ```
 
-Do not commit actual credentials. `ARGUMENT_MAP_ACCESS_TOKEN` is **demo-only access control**, not production-grade instructor authentication.
+Do not commit real credentials. `INSTRUCTOR_PIN` is validated by the Express server; the Argument Map does **not** ask for a separate demo access token. Authentication is maintained in a server-backed HttpOnly cookie using Redis, with a 12-hour expiry. An instructor login is required to create a room and generate an Argument Map. This remains a simplified shared-PIN authentication scheme, not per-user authorization.
+
+If Next.js starts on port 3001 due to port 3000 being occupied, run Express on a **different port**, and set `NEXT_PUBLIC_SOCKET_URL` and `FRONTEND_URL` to match the actual backend/frontend URLs. Restart the services after changing the environment values.
 
 Start the existing backend and frontend, then open the instructor room dashboard and use its **Argument Map** navigation link. The server requires a running PostgreSQL, Redis, and OpenAI API configuration; empty rooms have no transcripts to analyze.
 
 ## Input limitations
 
-- A teacher topic is required; discussion instructions are optional.
+- A teacher topic and planned duration (1–180 minutes) are required at **room creation**; discussion instructions are optional. The graph generation page displays these saved values and does not ask for them again.
 - Group IDs and group names are taken from existing room records.
 - Current group-level audio transcripts do not include verified speaker IDs, timestamps, or source offsets. The service requires these missing fields to be `null`.
 - Maximum total raw transcript size in this initial integration is 30,000 characters. Larger inputs require context-preserving chunking and global deduplication; do not truncate them.
 - The service only analyzes groups that have recorded transcript text.
+- Sessions created before the schema update may have no saved topic; create a new session for the automatic-input workflow.
 - The graph is generated on demand and is **not currently persisted** in the database.
 
 ## Visualization
@@ -74,12 +81,13 @@ Run at least the following checks:
 3. Confirm every edge has evidence and that the same unordered node pair is never represented twice.
 4. Confirm a shared node remains highlighted under each of its source groups.
 5. Check isolated nodes, click-to-source inspection, export JSON, and layout reset.
-6. Verify that a room without transcripts returns an informative error and that an invalid access token is rejected.
+6. Verify that a room without transcripts returns an informative error and that unauthenticated analysis requests return HTTP 401.
 7. Run `npm run build` and inspect deployment logs. A successful build is not an end-to-end functional test.
 
 ## Security and deployment
 
 - Classroom transcript data is sent to the configured external model service. Use only data that is authorized for such processing; anonymize where necessary.
-- The new endpoint performs a paid model call. Keep the access token secret and add real user authentication, rate limiting, request quotas, and monitoring before public production use.
+- The new endpoint performs a paid model call. A shared instructor PIN and Redis-backed session are required, but per-user roles, access authorization, rate limiting, quotas, CSRF protections for unusual clients, and monitoring should be evaluated before public production use.
 - The repository's current server is Express with PostgreSQL and Redis, alongside the Next.js frontend. A frontend-only Vercel deployment cannot replace the full backend and data services.
+- The original database schema is extended using backward-compatible `ALTER TABLE` statements, applied when the Express service starts.
 - A Git branch and its commits do not automatically imply a deployed preview. Test the branch locally or verify a successful preview deployment before sharing a URL.
