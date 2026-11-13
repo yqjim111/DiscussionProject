@@ -16,7 +16,7 @@ const scheduler = require('./services/scheduler');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
 const pool = require('./db/pool');
-const { login } = require('./services/instructorAuth');
+const { login, requireInstructor } = require('./services/instructorAuth');
 
 const app = express();
 const server = http.createServer(app);
@@ -54,7 +54,7 @@ app.use('/api/transcribe', transcribeRoute);
 app.use('/api/rooms', argumentMapRoute);
 
 // POST /api/rooms/:code/summary — synthesize all group summaries for a room
-app.post('/api/rooms/:code/summary', async (req, res) => {
+app.post('/api/rooms/:code/summary', requireInstructor, async (req, res) => {
   const { code } = req.params;
   if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
 
@@ -70,10 +70,44 @@ app.post('/api/rooms/:code/summary', async (req, res) => {
     const valid = summaries.filter((s) => s.summary && s.summary.trim().length > 0);
     const overall = await synthesizeAllSummaries(valid);
 
+    const client = await redis.getClient();
+    await client.set(`room:${code}:overallSummary`, overall);
     res.json({ summary: overall });
   } catch (err) {
     console.error('POST /api/rooms/:code/summary', err.message);
     res.status(500).json({ error: 'Failed to generate overall summary' });
+  }
+});
+
+// GET /api/rooms/:code/report — read previously generated results; no new AI calls
+app.get('/api/rooms/:code/report', requireInstructor, async (req, res) => {
+  const { code } = req.params;
+  if (!/^\\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
+  try {
+    const roomResult = await pool.query(
+      'SELECT code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at FROM rooms WHERE code = $1',
+      [code]
+    );
+    if (!roomResult.rows.length) return res.status(404).json({ error: 'Room not found' });
+    const groupResult = await pool.query(
+      'SELECT g.id, g.name FROM groups g JOIN rooms r ON g.room_id = r.id WHERE r.code = $1 ORDER BY g.created_at ASC',
+      [code]
+    );
+    const client = await redis.getClient();
+    const [graphRaw, summary] = await Promise.all([
+      client.get(`room:${code}:argumentMap`),
+      client.get(`room:${code}:overallSummary`)
+    ]);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      room: roomResult.rows[0],
+      groups: groupResult.rows.map(g => ({ id: String(g.id), name: g.name })),
+      overallSummary: summary || null,
+      argumentMap: graphRaw ? JSON.parse(graphRaw) : null
+    });
+  } catch (error) {
+    console.error('GET report:', error.message);
+    res.status(500).json({ error: 'Unable to load saved report data' });
   }
 });
 
