@@ -1,7 +1,7 @@
 const BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, { ...init, credentials: 'include' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
@@ -13,6 +13,10 @@ export interface Room {
   id: string;
   code: string;
   created_at: string;
+  teacher_topic: string | null;
+  instructor_name: string | null;
+  discussion_instructions: string;
+  duration_minutes: number | null;
 }
 
 export interface Group {
@@ -23,8 +27,25 @@ export interface Group {
   created_at?: string;
 }
 
-export function createRoom(): Promise<{ room: Room }> {
-  return request('/api/rooms', { method: 'POST' });
+export function loginInstructor(pin: string): Promise<{ authenticated: boolean }> {
+  return request('/api/instructor/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  });
+}
+
+export function createRoom(data: {
+  teacher_topic: string;
+  instructor_name: string;
+  discussion_instructions: string;
+  duration_minutes: number;
+}): Promise<{ room: Room }> {
+  return request('/api/rooms', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
 }
 
 export function getRoom(code: string): Promise<{ room: Room }> {

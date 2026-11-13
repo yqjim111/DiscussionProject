@@ -109,6 +109,19 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
+
+## Argument Map (feature branch)
+
+The optional teacher-facing Argument Map feature reads original group transcripts together with the topic, instructions, and planned duration saved when a room is created. The instructor opens **Argument Map** from the dashboard and generates a source-traceable node/edge graph without entering the same session information again.
+
+- Configure `INSTRUCTOR_PIN` on the backend for instructor sign-in, `OPENAI_API_KEY` for model access, and `ARGUMENT_MAP_MODEL` if a non-default model is needed.
+- A separate Argument Map demo access token is **not** required.
+- The database schema adds room metadata fields on backend startup.
+- Room creation and Argument Map generation require a valid server-backed instructor session.
+- The session uses an HttpOnly cookie and Redis; the PIN is no longer checked in browser-only code.
+- See [Argument Map integration notes](docs/argument-map.md) for deployment, security limitations and validation steps.
+
+
 ## User Flows
 
 ### Instructor

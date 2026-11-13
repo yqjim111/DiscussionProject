@@ -1,13 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { requireInstructor } = require('../services/instructorAuth');
 
 function generateRoomCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 // POST /api/rooms — create a room and return its 6-digit code
-router.post('/', async (req, res) => {
+router.post('/', requireInstructor, async (req, res) => {
+  const instructorName = typeof req.body?.instructor_name === 'string' ? req.body.instructor_name.trim() : '';
+  const teacherTopic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
+  const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
+  const duration = req.body?.duration_minutes;
+  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000
+    || !Number.isInteger(duration) || duration < 1 || duration > 180) {
+    return res.status(400).json({ error: 'Instructor name, topic and duration (1-180 min) are required; instructions are optional' });
+  }
   try {
     let code;
     for (let i = 0; i < 10; i++) {
@@ -19,8 +28,8 @@ router.post('/', async (req, res) => {
     if (!code) return res.status(500).json({ error: 'Could not generate unique room code' });
 
     const { rows } = await pool.query(
-      'INSERT INTO rooms (code) VALUES ($1) RETURNING id, code, created_at',
-      [code]
+      'INSERT INTO rooms (code, teacher_topic, discussion_instructions, duration_minutes, instructor_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at',
+      [code, teacherTopic, instructions, duration, instructorName]
     );
     res.status(201).json({ room: rows[0] });
   } catch (err) {
@@ -36,7 +45,7 @@ router.get('/:code', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, code, created_at FROM rooms WHERE code = $1',
+      'SELECT id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at FROM rooms WHERE code = $1',
       [code]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Room not found' });
@@ -72,6 +81,8 @@ router.delete('/:code', async (req, res) => {
       await redis.del(`group:${g.id}:lastSummaryTime`);
     }
 
+    await redis.del(`room:${code}:argumentMap`);
+    await redis.del(`room:${code}:overallSummary`);
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE /api/rooms/:code', err.message);

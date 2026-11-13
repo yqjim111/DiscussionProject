@@ -151,17 +151,20 @@ export default function GroupSidebar({
                 </p>
               </div>
 
-              {group.id !== myGroupId ? (
+              <div className="flex-shrink-0 flex items-center gap-2">
+                {group.id === myGroupId && (
+                  <span className="text-xs text-emerald-500 font-medium">You</span>
+                )}
                 <button
+                  type="button"
                   onClick={() => onViewGroup(group.id)}
-                  className="flex-shrink-0 text-xs text-emerald-600 hover:text-emerald-700
+                  className="text-xs text-emerald-600 hover:text-emerald-700
                              font-semibold transition-colors"
+                  aria-label={`View ${group.name} summary`}
                 >
                   View Summary
                 </button>
-              ) : (
-                <span className="flex-shrink-0 text-xs text-emerald-500 font-medium">You</span>
-              )}
+              </div>
             </div>
           </div>
         ))}
