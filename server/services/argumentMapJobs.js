@@ -5,11 +5,12 @@ const redis = require('./redis');
 const { analyzeArgumentMap } = require('./argumentMap');
 const { finishReport } = require('./reportStore');
 const { analysisText } = require('./manualPoints');
+const { analyzeThematic } = require('./thematicAnalysis');
 let working = null;
 let interval = null;
 
 function publicJob(job) {
-  return job ? { id: job.id, status: job.status, stage: job.stage, error: job.error, updated_at: job.updated_at } : null;
+  return job ? { id: job.id, status: job.status, stage: job.stage, error: job.error, updated_at: job.updated_at, thematic_requested: Boolean(job.input?.thematicRequested) } : null;
 }
 
 async function getJob(code) {
@@ -35,6 +36,13 @@ async function requestReport(code, refreshSummary = false) {
   return rows[0] || null;
 }
 
+async function requestThematic(code) {
+  const { rows } = await pool.query(`UPDATE argument_map_jobs
+    SET input = input || jsonb_build_object('thematicRequested', true), updated_at = NOW()
+    WHERE room_code = $1 AND status IN ('queued', 'running') RETURNING *`, [code]);
+  return rows[0] || null;
+}
+
 async function drain() {
   for (;;) {
     // Expired leases recover interrupted jobs after a backend restart. SKIP LOCKED
@@ -52,9 +60,9 @@ async function drain() {
     try {
       const input = job.input;
       const graph = input.reuseSavedMap ? (job.result || input.reuseGraph) : await analyzeArgumentMap({ ...input, onProgress: async stage => {
-        await pool.query("UPDATE argument_map_jobs SET stage = $1, updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
+        await pool.query("UPDATE argument_map_jobs SET stage = $1, lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
       } });
-      const payload = input.reuseSavedMap ? graph : {
+      let payload = input.reuseSavedMap ? graph : {
         ...graph, source_snapshot: input, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
         input: { source: 'original_transcripts', generated_at: new Date().toISOString(), topic: input.topic, instructions: input.instructions,
           groups: input.groups.map(g => ({ id: g.id, name: g.name, characters: analysisText(g).length, transcript_characters: g.transcript.length, manual_characters: (g.manualPoints || []).reduce((sum, p) => sum + p.text.length, 0) })) }
@@ -69,13 +77,29 @@ async function drain() {
         try { await (await redis.getClient()).set('room:' + job.room_code + ':argumentMap', JSON.stringify(payload)); }
         catch (error) { console.error('Map cache:', error.message); }
       }
+      let thematicHandled = false;
+      let reportHandled = false;
       for (;;) {
         const latest = await getJob(job.room_code);
         if (!latest || latest.id !== job.id || latest.status !== 'running') break;
+        if (latest.input.thematicRequested && !thematicHandled) {
+          const source = payload.source_snapshot || latest.input;
+          const thematic = await analyzeThematic({ ...source, onProgress: async stage => {
+            await pool.query("UPDATE argument_map_jobs SET stage = $1, lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
+          } });
+          const previousAnalysis = payload.thematic_analysis;
+          payload = { ...payload, thematic_analysis: thematic.status === 'unavailable' && previousAnalysis?.status === 'completed'
+            ? { ...previousAnalysis, warning: thematic.warning, last_attempt_at: thematic.generated_at }
+            : thematic };
+          await pool.query("UPDATE argument_map_jobs SET result = $1::jsonb, updated_at = NOW() WHERE id = $2 AND status = 'running' RETURNING room_code", [JSON.stringify(payload), job.id]);
+          try { await (await redis.getClient()).set('room:' + job.room_code + ':argumentMap', JSON.stringify(payload)); } catch (error) { console.error('Thematic cache:', error.message); }
+          thematicHandled = true;
+        }
         const requested = Boolean(latest.input.reportRequested);
-        if (requested) {
-          await pool.query("UPDATE argument_map_jobs SET stage = $1, updated_at = NOW() WHERE id = $2 AND status = 'running'", ['Preparing report summary', job.id]);
+        if (requested && !reportHandled) {
+          await pool.query("UPDATE argument_map_jobs SET stage = $1, lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", ['Preparing report summary', job.id]);
           await finishReport(job.room_code, payload, latest.input.refreshSummary, latest.input);
+          reportHandled = true;
         }
         // A report request arriving after our read must be handled before this
         // job can finish. An arriving request after completion queues reuse.
@@ -83,7 +107,8 @@ async function drain() {
           result = $1::jsonb, error = NULL, lease_until = NULL, updated_at = NOW()
           WHERE id = $2 AND status = 'running'
           AND (COALESCE((input->>'reportRequested')::boolean, false) = false OR $3::boolean)
-          RETURNING room_code`, [JSON.stringify(payload), job.id, requested]);
+          AND (COALESCE((input->>'thematicRequested')::boolean, false) = false OR $4::boolean)
+          RETURNING room_code`, [JSON.stringify(payload), job.id, reportHandled, thematicHandled]);
         if (completed.rows.length) break;
       }
     } catch (error) {
@@ -107,4 +132,4 @@ function startWorker() {
   interval.unref();
 }
 
-module.exports = { enqueue, getJob, publicJob, requestReport, wakeWorker, startWorker };
+module.exports = { enqueue, getJob, publicJob, requestReport, requestThematic, wakeWorker, startWorker };

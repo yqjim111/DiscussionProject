@@ -66,7 +66,8 @@ mock('../db/pool', { query: async (sql, args = []) => {
   if (sql.includes('SET input = input ||')) {
     const job = jobs.get(args[0]);
     if (!job || !['queued', 'running'].includes(job.status)) return { rows: [] };
-    job.input.reportRequested = true; job.input.refreshSummary = Boolean(job.input.refreshSummary || args[1]);
+    if (sql.includes("'thematicRequested'")) job.input.thematicRequested = true;
+    else { job.input.reportRequested = true; job.input.refreshSummary = Boolean(job.input.refreshSummary || args[1]); }
     return { rows: [structuredClone(job)] };
   }
   if (sql.includes('UPDATE argument_map_jobs')) {
@@ -74,6 +75,7 @@ mock('../db/pool', { query: async (sql, args = []) => {
     if (!job || job.status !== 'running') return { rows: [] };
     if (sql.includes("SET status = 'succeeded'")) {
       if (job.input.reportRequested && !args[2]) return { rows: [] };
+      if (job.input.thematicRequested && !args[3]) return { rows: [] };
       job.status = 'succeeded'; job.result = JSON.parse(args[0]);
     }
     else if (sql.includes('SET result =')) job.result = JSON.parse(args[0]);
@@ -106,6 +108,8 @@ let transcribeCalls = 0;
 let failReport = false;
 let aiGate = null;
 let summaryGate = null;
+let thematicGate = null;
+let failThematic = false;
 function graphFor(quote, groupId = groups[0].id) {
   return { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', sources: [{
     group_id: groupId, speaker_id: null, timestamp: null, source_location: null, original_quote: quote,
@@ -119,6 +123,17 @@ class FakeOpenAI {
       assert.equal('max_tokens' in input, false);
       assert.ok(input.max_completion_tokens > 0);
       aiInputs.push(structuredClone(input));
+      const name = input.response_format.json_schema.name;
+      if (name.startsWith('thematic_')) {
+        if (failThematic) throw Object.assign(new Error('Test thematic quota failure'), { status: 429 });
+        const data = JSON.parse(input.messages[1].content);
+        if (thematicGate) await thematicGate;
+        const result = name === 'thematic_codes' ? { codes: data.original_sources.map(s => ({ label: 'Source-grounded meaning', meaning: s.original_quote, source_ids: [s.source_id] })) } : name === 'thematic_review' ? data.candidate : {
+          themes: [{ theme_id: 'T1', name: 'A context-grounded pattern', central_concept: 'Shared meaning', definition: 'Pattern in original discussion', inclusion: 'Relevant meanings', exclusion: 'Unrelated meanings', qualifications: 'Interpretive draft', topic_relevance: 'ON_TOPIC', code_ids: data.codes.map(c => c.code_id) }],
+          axes: [], unassigned_code_ids: [], alternative_interpretations: [], limitations: ['No supported bipolar dimension in this fixture'], review_questions: ['Check these meanings against the original text.'],
+        };
+        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
+      }
       if (input.response_format.json_schema.name === 'report_overall_summary') {
         if (summaryGate) await summaryGate;
         if (failReport) throw Object.assign(new Error('Test quota failure'), { status: 429 });
@@ -411,6 +426,32 @@ test('a report request joins an existing map job, and persisted report intent re
   assert.equal(job.status, 'succeeded');
   assert.deepEqual(job.result, graph);
   assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['report_overall_summary']);
+});
+
+test('thematic analysis reuses saved original input and leaves graph nodes and relationships unchanged', async () => {
+  const previous = structuredClone(jobs.get(room.code).result);
+  const calls = aiInputs.length; let release;
+  thematicGate = new Promise(resolve => { release = resolve; });
+  const first = await (await post('/api/rooms/' + room.code + '/thematic-analysis', {}, true)).json();
+  const duplicate = await (await post('/api/rooms/' + room.code + '/thematic-analysis', {}, true)).json();
+  assert.equal(first.job.id, duplicate.job.id);
+  assert.equal(first.job.thematic_requested, true);
+  release(); thematicGate = null; await completeJobs();
+  const result = jobs.get(room.code).result;
+  assert.deepEqual(result.nodes, previous.nodes); assert.deepEqual(result.edges, previous.edges);
+  assert.equal(result.thematic_analysis.status, 'completed');
+  assert.ok(result.thematic_analysis.themes[0].sources.length);
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review']);
+  const report = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.deepEqual(report.thematicAnalysis, result.thematic_analysis);
+  failThematic = true;
+  assert.equal((await post('/api/rooms/' + room.code + '/thematic-analysis', {}, true)).status, 202);
+  await completeJobs(); failThematic = false;
+  const preserved = jobs.get(room.code).result;
+  assert.deepEqual(preserved.nodes, previous.nodes);
+  assert.deepEqual(preserved.thematic_analysis.themes, result.thematic_analysis.themes);
+  assert.equal(preserved.thematic_analysis.status, 'completed');
+  assert.ok(preserved.thematic_analysis.warning && preserved.thematic_analysis.last_attempt_at, 'A failed retry preserves the previous reviewed draft and exposes its warning');
 });
 
 test('content analysis rejects fabricated provenance, duplicated statements and forced positions without a proposition', () => {

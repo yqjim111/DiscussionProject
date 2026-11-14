@@ -8,13 +8,14 @@ import { getSocket } from '@/lib/socket';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import cytoscape from 'cytoscape';
 import { graphElements, graphStyles, layoutGraph, fitGraph, categoryFor } from '@/lib/argumentMapView';
+import ThematicAnalysis, { type ThematicData } from '@/components/ThematicAnalysis';
 import ArgumentMapLegend from '@/components/ArgumentMapLegend';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string; source_kind?: string };
 type Node = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
-type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
-type Job = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; stage: string; error?: string };
+type Graph = { thematic_analysis?: ThematicData; nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
+type Job = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; stage: string; error?: string; thematic_requested?: boolean };
 declare global { interface Window { cytoscape?: (config: any) => any } }
 
 const API_BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
@@ -37,7 +38,7 @@ export default function ArgumentMapPage() {
   function applyStatus(result: { job: Job | null; graph: Graph | null }) {
     setJob(result.job);
     setLoading(result.job?.status === 'queued' || result.job?.status === 'running');
-    if (result.graph) setGraph(previous => previous && previous.input?.generated_at === result.graph?.input?.generated_at ? previous : result.graph);
+    if (result.graph) setGraph(previous => previous && previous.input?.generated_at === result.graph?.input?.generated_at && previous.thematic_analysis?.generated_at === result.graph?.thematic_analysis?.generated_at && previous.thematic_analysis?.last_attempt_at === result.graph?.thematic_analysis?.last_attempt_at ? previous : result.graph);
     if (result.job?.status === 'failed') setError(result.job.error || 'Generation failed. Please retry.');
     else setError('');
   }
@@ -155,6 +156,16 @@ export default function ArgumentMapPage() {
     }
   }
 
+  async function generateThematic() {
+    requestVersion.current++; setLoading(true); setError('');
+    try {
+      const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/thematic-analysis', { method: 'POST', credentials: 'include' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to queue thematic analysis');
+      applyStatus(result);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to generate thematic analysis'); setLoading(false); }
+  }
+
   function exportJSON() {
     if (!graph) return;
     // Preserve fallback warnings and source metadata in downloaded results too.
@@ -233,6 +244,7 @@ export default function ArgumentMapPage() {
           </div>
         </section>
       </div>
+      <div className="max-w-screen-2xl mx-auto mt-5 rounded-xl border border-slate-200 bg-white p-5"><ThematicAnalysis analysis={graph?.thematic_analysis} onGenerate={() => void generateThematic()} busy={loading} stage={job?.thematic_requested ? job.stage : undefined} /></div>
     </main>
   );
 }

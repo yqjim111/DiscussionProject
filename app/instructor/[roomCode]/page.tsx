@@ -142,7 +142,7 @@ export default function InstructorDashboard() {
               href={`/instructor/${roomCode}/report`}
               className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm"
             >
-              Export PDF
+              Generate report
             </Link>
             <ArgumentMapLink roomCode={roomCode} />
             <button

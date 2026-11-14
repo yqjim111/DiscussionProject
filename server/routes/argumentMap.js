@@ -6,8 +6,40 @@ const redis = require('../services/redis');
 const jobs = require('../services/argumentMapJobs');
 const { requireInstructor } = require('../services/instructorAuth');
 const { getManualPoints } = require('../services/manualPoints');
+const { readSession } = require('../services/reportStore');
 
 const router = express.Router();
+
+// Reuse the map's original input and durable worker; never re-extract its nodes
+// just to add thematic analysis. Concurrent map/report requests share the job.
+router.post('/:code/thematic-analysis', requireInstructor, async (req, res) => {
+  const { code } = req.params;
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const previous = await jobs.getJob(code);
+      const cached = previous?.result ? null : await (await redis.getClient()).get('room:' + code + ':argumentMap');
+      const graph = previous?.result || (cached ? JSON.parse(cached) : null);
+      let job;
+      if (['queued', 'running'].includes(previous?.status)) {
+        job = await jobs.requestThematic(code);
+      } else {
+        const current = await readSession(code);
+        if (!current) return res.status(404).json({ error: 'Room not found' });
+        const source = graph?.source_snapshot || (previous?.status === 'succeeded' ? previous.input : null) || {
+          topic: current.room.teacher_topic, instructions: current.room.discussion_instructions, groups: current.groups,
+        };
+        if (graph && !graph.source_snapshot && previous?.status !== 'succeeded') return res.status(409).json({ error: 'Regenerate this older map first to capture a matching original input snapshot.' });
+        await jobs.enqueue(code, { ...source, reuseSavedMap: Boolean(graph), reuseGraph: graph, reportRequested: false, refreshSummary: false, thematicRequested: true });
+        job = await jobs.requestThematic(code);
+      }
+      if (!job) continue;
+      res.status(202).json({ job: jobs.publicJob(job), graph: job.result || graph || null });
+      setImmediate(() => { void jobs.wakeWorker(); }); return;
+    }
+    res.status(409).json({ error: 'Generation state changed. Please retry.' });
+  } catch (error) { console.error('Thematic queue:', error.message); res.status(500).json({ error: 'Unable to queue thematic analysis.' }); }
+});
 
 // POST /api/rooms/:code/argument-map â€” instructor-triggered analysis of raw group transcripts
 router.post('/:code/argument-map', requireInstructor, async (req, res) => {

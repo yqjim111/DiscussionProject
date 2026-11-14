@@ -113,7 +113,7 @@ export default function InstructorCreate() {
               <input
                 className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
                 maxLength={255}
-                placeholder="Name to include in the PDF report"
+                placeholder="Name to include in the report"
                 value={instructorName}
                 onChange={(e) => setInstructorName(e.target.value)}
               />

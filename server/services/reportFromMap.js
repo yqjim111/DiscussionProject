@@ -17,6 +17,7 @@ function reportFromMap(current, graph, sourceInput, saved) {
   const inputHash = snapshotHash(room, groups);
   return {
     schemaVersion: 2, room, groups, argumentMap: graph, mapVersion, inputHash,
+    thematicAnalysis: graph?.thematic_analysis || null,
     overallSummary: same ? saved.overallSummary : null,
     summaryWarning: same ? saved.summaryWarning || '' : '',
     contentAnalysis: graph ? { statements: graph.nodes.map(node => ({

@@ -4,6 +4,33 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { renderMapSvg, reportMarkdown, zipFiles } = require('../../lib/reportExport');
 
+test('Markdown preserves page section order, emphasis, multiline fields and thematic evidence/axis details', () => {
+  const source = { source_id: 'Q1', group_id: 'g1', group_name: 'One', source_kind: 'manual', original_quote: 'Keep authorship.' };
+  const evidence = { code_ids: ['C1'], group_ids: ['g1'], sources: [source] };
+  const thematic = { status: 'completed', codes: [{ code_id: 'C1', label: 'Retain authorship', meaning: 'Students remain authors', sources: [source] }],
+    themes: [{ ...evidence, theme_id: 'T1', name: 'Meaningful authorship', central_concept: 'Agency', definition: 'A contextual pattern', inclusion: 'Authorship', exclusion: 'Tool speed alone', qualifications: 'Conditional', development: 'CANDIDATE', topic_relevance: 'ON_TOPIC' }],
+    axes: [{ axis_id: 'A1', name: 'Delegation', dimension: 'Extent of delegation', relationship: 'CONTINUUM', left_pole: { ...evidence, label: 'Assistance', definition: 'Student authors' }, right_pole: { ...evidence, label: 'Replacement', definition: 'Tool authors' }, rationale: 'Contextual contrast', qualifications: 'Intermediate cases matter' }],
+    unassigned_code_ids: ['C1'], alternative_interpretations: ['Different task stages'], limitations: ['Review required'], review_questions: ['Does context support the contrast?'] };
+  const report = { room: { code: '123456', teacher_topic: 'Topic', discussion_instructions: 'First task\nSecond task', created_at: '2026-11-14T12:00:00Z' },
+    groups: [{ id: 'g1', name: 'One', members: ['A'], transcript: 'Spoken first.\nSpoken second.', manualPoints: [{ id: 'p1', text: 'First typed line\nSecond typed line' }] }],
+    contentAnalysis: { statements: [{ statement: 'Keep authorship.', sources: [source] }] },
+    argumentMap: { nodes: [{ normalized_statement: 'Keep authorship.', topic_position: 'NEUTRAL', sources: [source] }], edges: [] },
+    overallSummary: '<script>not executable</script>', thematicAnalysis: thematic,
+  };
+  const markdown = reportMarkdown(report);
+  const headings = ['## Session Information', '## 1. Overall Summary', '## 2. Content Analysis', '## 3. Argument Map', '## Thematic Analysis', '## 4. Original Transcripts'];
+  assert.deepEqual(headings.map(h => markdown.indexOf(h)), headings.map(h => markdown.indexOf(h)).sort((a, b) => a - b));
+  assert.match(markdown, /First task  \nSecond task/);
+  assert.match(markdown, /\*\*Statement 1\.\*\*/);
+  assert.match(markdown, /Assistance ↔ Replacement/);
+  assert.match(markdown, /\*\*Central concept:\*\* Agency/);
+  assert.match(markdown, /> Keep authorship\./);
+  assert.match(markdown, /Intermediate cases matter/);
+  assert.match(markdown, /Does context support the contrast/);
+  assert.match(markdown, /First typed line  \n  Second typed line/);
+  assert.doesNotMatch(markdown, /<script>/);
+});
+
 test('large vector exports include all nodes, edges and full text; ZIP opens with a standard independent reader', () => {
   const positions = ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'];
   const graph = { nodes: Array.from({ length: 305 }, (_, i) => ({
