@@ -7,6 +7,7 @@ import { getGroups, generateOverallSummary, deleteRoom, type Group } from '@/lib
 import { getSocket } from '@/lib/socket';
 import GroupCard from '@/components/GroupCard';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
+import ArgumentMapLink from '@/components/ArgumentMapLink';
 
 export default function InstructorDashboard() {
   const params = useParams();
@@ -137,12 +138,7 @@ export default function InstructorDashboard() {
             >
               Export PDF
             </Link>
-            <Link
-              href={`/instructor/${roomCode}/argument-map`}
-              className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-colors text-sm"
-            >
-              Argument Map
-            </Link>
+            <ArgumentMapLink roomCode={roomCode} />
             <button
               onClick={handleGenerateOverall}
               disabled={loadingOverall || groups.length === 0}

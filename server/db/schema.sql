@@ -23,3 +23,16 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions TEXT NOT NULL
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS instructor_name TEXT;
+
+-- Durable, independently polled jobs survive browser navigation and backend restarts.
+CREATE TABLE IF NOT EXISTS argument_map_jobs (
+  room_code VARCHAR(6) PRIMARY KEY REFERENCES rooms(code) ON DELETE CASCADE,
+  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  status TEXT NOT NULL DEFAULT 'queued',
+  stage TEXT NOT NULL DEFAULT 'Queued',
+  input JSONB NOT NULL,
+  result JSONB,
+  error TEXT,
+  lease_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

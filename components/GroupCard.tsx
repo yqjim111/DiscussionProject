@@ -44,7 +44,7 @@ export default function GroupCard({ group, onBroadcast }: Props) {
 
       <details className="text-sm">
         <summary className="cursor-pointer font-semibold text-gray-700">View Original Transcription</summary>
-        <p className="whitespace-pre-wrap break-words mt-3 max-h-72 overflow-y-auto leading-6 text-gray-700">{group.transcript || 'No transcription yet.'}</p>
+        <p className="whitespace-normal break-words mt-3 max-h-72 overflow-y-auto leading-6 text-gray-700">{group.transcript?.replace(/\s+/g, ' ').trim() || 'No transcription yet.'}</p>
       </details>
 
       {/* Broadcast button */}

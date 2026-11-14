@@ -1,5 +1,7 @@
 # Argument Map — Developer Integration
 
+The current execution flow is documented in [Argument Map workflow](argument-map-workflow.md). It uses durable PostgreSQL jobs, indexed original-source references and explicit excerpt-only fallbacks; the legacy quote-copying execution notes below are historical.
+
 ## Overview
 
 The Argument Map feature converts **existing raw group transcripts** from a ClassDiscuss room into a source-traceable network. The model identifies individual ideas (nodes) and evidence-backed connections (edges), and a browser-based viewer renders the validated JSON.
@@ -66,7 +68,7 @@ Start the existing backend and frontend, then open the instructor room dashboard
 - `SUPPORTS` and `ATTACKS` are directed; `SIMILAR_TO` is symmetric and displayed without an arrow.
 - Group highlighting is inclusive: a node with multiple group sources remains highlighted when **any** of those groups is selected. This does not imply a group consensus.
 - The viewer supports fit, reset layout, JSON export, and click-to-source inspection.
-- Graph rendering uses Cytoscape.js loaded from a CDN; network access is needed for that dependency.
+- Graph rendering uses Cytoscape.js bundled with the application; no external renderer CDN is needed.
 
 ## Verification and current limitations
 

@@ -15,6 +15,7 @@ function recorderHarness(transcribe) {
   const cleanup = [];
   let timerId = 0;
   let trackStopped = false;
+  let constraints;
   const stream = { getTracks: () => [{ stop: () => { trackStopped = true; } }] };
   class MediaRecorder {
     static isTypeSupported() { return true; }
@@ -44,7 +45,7 @@ function recorderHarness(transcribe) {
       if (id === '@/lib/api') return { transcribeAudio: transcribe };
       throw new Error('Unexpected import ' + id);
     },
-    navigator: { mediaDevices: { getUserMedia: async () => stream } },
+    navigator: { mediaDevices: { getUserMedia: async options => { constraints = options; return stream; } } },
     window: { addEventListener() {}, removeEventListener() {} },
     MediaRecorder, Blob, FormData, crypto,
     setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
@@ -57,6 +58,7 @@ function recorderHarness(transcribe) {
     start: () => tree.props.children[0].props.onClick(),
     tick: () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); },
     trackStopped: () => trackStopped,
+    constraints: () => constraints,
     dispose: () => cleanup.forEach(fn => fn()),
   };
 }
@@ -66,6 +68,8 @@ test('uploads complete four-second segments while still recording; flush saves f
   const uploads = [];
   const h = recorderHarness(async form => { uploads.push(form); return { transcript: 'speech' }; });
   h.start(); await settle();
+  assert.equal(h.constraints().audio.noiseSuppression.ideal, true);
+  assert.equal(h.constraints().audio.echoCancellation.ideal, true);
   assert.equal(h.timers.values().next().value.delay, 4000);
   h.tick(); await settle();
   assert.equal(uploads.length, 1);

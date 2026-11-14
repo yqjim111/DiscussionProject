@@ -85,12 +85,12 @@ router.post('/:groupId/summary', async (req, res) => {
   if (!/^[a-f0-9-]{36}$/i.test(groupId)) return res.status(400).json({ error: 'Invalid group ID' });
   try {
     const { rows } = await pool.query(
-      'SELECT g.id, r.code FROM groups g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1', [groupId]
+      'SELECT g.id, r.code, r.teacher_topic, r.discussion_instructions FROM groups g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1', [groupId]
     );
     if (!rows.length) return res.status(404).json({ error: 'Group not found' });
     const transcript = await redis.getTranscript(groupId);
     if (!transcript.trim()) return res.status(422).json({ error: 'Record some discussion before generating a summary.' });
-    const summary = await summarizeTranscript(transcript);
+    const summary = await summarizeTranscript(transcript, { topic: rows[0].teacher_topic, instructions: rows[0].discussion_instructions });
     if (!summary) return res.status(422).json({ error: 'Record a little more discussion before generating a summary.' });
     await redis.setSummary(groupId, summary);
     req.app.get('io').to(rows[0].code).emit('group:summary:update', { groupId, summary });

@@ -6,16 +6,17 @@ import Link from 'next/link';
 import { getRoom, getGroups, type Room, type Group } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
-import Script from 'next/script';
+import cytoscape from 'cytoscape';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string };
 type Node = { node_id: string; normalized_statement: string; primary_type: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
-type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
+type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
+type Job = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; stage: string; error?: string };
 declare global { interface Window { cytoscape?: (config: any) => any } }
 
 const API_BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
-const layout = () => ({ name: 'cose', animate: false, fit: true, padding: 45, nodeRepulsion: 600000, idealEdgeLength: 100, numIter: 650, gravity: 0.75 });
+const layout = (count = 0) => count > 100 ? { name: 'grid', animate: false, fit: true, padding: 45 } : ({ name: 'cose', animate: false, fit: true, padding: 45, nodeRepulsion: 600000, idealEdgeLength: 100, numIter: 650, gravity: 0.75 });
 const styles = [
   { selector: 'node', style: { 'background-color': '#e7ddff', 'border-color': '#bba8e5', 'border-width': 2, label: 'data(label)', color: '#2d2450', 'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 190, 'text-valign': 'center', 'text-halign': 'center', 'padding': '16px', shape: 'round-rectangle', width: 'label', height: 'label', 'min-width': 140, 'min-height': 60 } },
   { selector: 'edge', style: { width: 2, 'line-color': '#788092', 'target-arrow-color': '#788092', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', label: 'data(label)', 'font-size': 10, color: '#4b5563', 'text-background-color': '#fff', 'text-background-opacity': 1, 'text-background-padding': '4px', 'text-rotation': 'autorotate' } },
@@ -29,7 +30,6 @@ export default function ArgumentMapPage() {
   const roomCode = String(params.roomCode || '');
   const container = useRef<HTMLDivElement>(null);
   const cy = useRef<any>(null);
-  const [ready, setReady] = useState(false);
   const [room, setRoom] = useState<Room | null>(null);
   const [roomError, setRoomError] = useState('');
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -38,6 +38,32 @@ export default function ArgumentMapPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [inputGroups, setInputGroups] = useState<Group[]>([]);
+  const [job, setJob] = useState<Job | null>(null);
+  const requestVersion = useRef(0);
+
+  function applyStatus(result: { job: Job | null; graph: Graph | null }) {
+    setJob(result.job);
+    setLoading(result.job?.status === 'queued' || result.job?.status === 'running');
+    if (result.graph) setGraph(previous => previous && previous.input?.generated_at === result.graph?.input?.generated_at ? previous : result.graph);
+    if (result.job?.status === 'failed') setError(result.job.error || 'Generation failed. Please retry.');
+    else setError('');
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      const version = requestVersion.current;
+      try {
+        const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/argument-map', { credentials: 'include', cache: 'no-store' });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Unable to read generation status');
+        if (!cancelled && version === requestVersion.current) applyStatus(result);
+      } catch (err) { if (!cancelled) setError(err instanceof Error ? err.message : 'Unable to check generation status'); }
+    };
+    void poll();
+    const interval = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [roomCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,16 +83,16 @@ export default function ArgumentMapPage() {
   }, [roomCode]);
 
   useEffect(() => {
-    if (!graph || !ready || !window.cytoscape || !container.current) return;
+    if (!graph || !container.current) return;
     if (cy.current) cy.current.destroy();
-    const instance = window.cytoscape({
+    const instance = cytoscape({
       container: container.current,
       elements: [
         ...graph.nodes.map(n => ({ data: { id: n.node_id, label: n.normalized_statement, sources: n.sources, type: n.primary_type } })),
         ...graph.edges.map(e => ({ data: { id: e.edge_id, source: e.source_node_id, target: e.target_node_id, label: e.relationship_type, relationship_type: e.relationship_type, evidence: e.evidence, justification: e.justification } }))
       ],
-      style: styles,
-      layout: layout(),
+      style: styles as any,
+      layout: layout(graph.nodes.length) as any,
       wheelSensitivity: 0.18,
       minZoom: 0.15,
       maxZoom: 3
@@ -102,7 +128,7 @@ export default function ArgumentMapPage() {
     setGroupFilter('*');
     setDetails(null);
     return () => { instance.destroy(); if (cy.current === instance) cy.current = null; };
-  }, [graph, ready]);
+  }, [graph]);
 
   useEffect(() => {
     const instance = cy.current;
@@ -119,10 +145,7 @@ export default function ArgumentMapPage() {
 
   async function generate() {
     setError('');
-    if (!room?.teacher_topic) {
-      setError('This room has no saved discussion topic. Create a new session with a topic.');
-      return;
-    }
+    requestVersion.current++;
     setLoading(true);
     try {
       const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/argument-map', {
@@ -132,18 +155,17 @@ export default function ArgumentMapPage() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to analyze discussion');
-      if (!Array.isArray(result.nodes) || !Array.isArray(result.edges)) throw new Error('Invalid graph response');
-      setGraph(result);
+      applyStatus(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to generate map');
-    } finally {
       setLoading(false);
     }
   }
 
   function exportJSON() {
     if (!graph) return;
-    const blob = new Blob([JSON.stringify({ nodes: graph.nodes, edges: graph.edges }, null, 2)], { type: 'application/json' });
+    // Preserve fallback warnings and source metadata in downloaded results too.
+    const blob = new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'argument_map_' + roomCode + '.json'; a.click();
@@ -152,11 +174,10 @@ export default function ArgumentMapPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-5 md:p-8 text-slate-800">
-      <Script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js" strategy="afterInteractive" onLoad={() => setReady(true)} />
       <header className="max-w-screen-2xl mx-auto flex flex-wrap items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-bold">Argument Map</h1>
-          <p className="text-sm text-slate-500">Room {roomCode} · Verified classroom argument network</p>
+          <p className="text-sm text-slate-500">Room {roomCode} · Source-grounded classroom argument network</p>
         </div>
         <Link className="text-indigo-700 font-semibold text-sm" href={'/instructor/' + roomCode}>Back to Instructor Dashboard</Link>
       </header>
@@ -179,9 +200,11 @@ export default function ArgumentMapPage() {
             </div>)}
           </details>
           {graph?.input && <p className="text-xs text-slate-500">Last map input: {graph.input.groups.filter(g => g.characters > 0).length} groups with transcripts · {graph.input.groups.reduce((sum, g) => sum + g.characters, 0)} characters · {new Date(graph.input.generated_at).toLocaleTimeString()}</p>}
-          <button type="button" disabled={loading || !room?.teacher_topic} onClick={generate} className="w-full rounded-lg bg-indigo-600 text-white font-semibold px-4 py-3 disabled:opacity-50">
-            {loading ? 'Analyzing discussion…' : 'Generate Argument Map'}
+          <button type="button" disabled={loading || !room} onClick={generate} className="w-full rounded-lg bg-indigo-600 text-white font-semibold px-4 py-3 disabled:opacity-50">
+            {loading ? 'Generating in Background…' : graph ? 'Regenerate Argument Map' : 'Generate Argument Map'}
           </button>
+          {loading && <p role="status" className="text-sm text-indigo-700">{job?.stage || 'Queueing task…'} You can return to the dashboard; this task will continue. Reopen this page to see the result.</p>}
+          {graph?.generation?.warning && <p role="status" className="text-sm text-amber-800 bg-amber-50 rounded-lg p-3">{graph.generation.warning}</p>}
           {error && <p role="alert" className="text-red-700 text-sm break-words">{error}</p>}
           <p className="text-xs text-slate-500">Transcript data will be sent to the configured AI provider. Use only authorized or anonymized classroom data.</p>
         </section>
@@ -189,7 +212,7 @@ export default function ArgumentMapPage() {
           <div className="flex flex-wrap gap-3 items-center justify-between mb-4">
             <div>
               <h2 className="font-bold text-lg">Interactive Argument Map</h2>
-              <p className="text-xs text-slate-500">{graph ? graph.nodes.length + ' nodes · ' + graph.edges.length + ' verified edges' : 'No graph generated yet'}</p>
+              <p className="text-xs text-slate-500">{graph ? graph.nodes.length + ' nodes · ' + graph.edges.length + ' relationships' + (graph.generation?.mode === 'extractive_fallback' ? ' · Original-excerpt fallback' : '') : 'No graph generated yet'}</p>
             </div>
             <div className="flex gap-2 flex-wrap items-center">
               <select aria-label="Highlight group" className="border rounded-lg p-2 text-sm" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
@@ -197,11 +220,12 @@ export default function ArgumentMapPage() {
                 {graph?.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
               <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current?.fit(undefined, 40)}>Fit view</button>
-              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current?.layout(layout()).run()}>Reset layout</button>
+              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current?.layout(layout(graph?.nodes.length)).run()}>Reset layout</button>
               <button type="button" className="border rounded-lg p-2 text-sm" disabled={!graph} onClick={exportJSON}>Export JSON</button>
             </div>
           </div>
           <div ref={container} className="w-full rounded-xl border border-slate-200 bg-white" style={{ height: 550 }} role="img" aria-label="Interactive argument network" />
+          {graph && !graph.nodes.length && <p className="text-sm text-slate-600 mt-3">No substantive argument statements were identified. The original transcripts remain available in the input panel; no arguments or relationships have been invented.</p>}
           <p className="text-xs text-slate-500 mt-3">SUPPORTS → directed · ATTACKS → directed · SIMILAR_TO — undirected. Relationship labels appear on each edge. Click a node or edge to inspect its sources.</p>
           <div className="mt-4 p-4 bg-slate-50 rounded-lg min-h-[95px] text-sm">
             {details ? <>

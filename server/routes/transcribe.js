@@ -4,6 +4,7 @@ const multer = require('multer');
 const { default: OpenAI, toFile } = require('openai');
 const redis = require('../services/redis');
 const pool = require('../db/pool');
+const { transcriptionOptions } = require('../services/transcription');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -35,11 +36,10 @@ router.post('/', upload.single('audio'), async (req, res) => {
       type: req.file.mimetype || 'audio/webm',
     });
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: 'whisper-1',
-      language: 'en',
-    });
+    // Previous original text supplies spelling/continuity context, not a summary
+    // or an instruction to invent the next sentence. Audio is still transcribed.
+    const previousTranscript = await redis.getTranscript(groupId);
+    const transcription = await openai.audio.transcriptions.create(transcriptionOptions(audioFile, previousTranscript));
 
     const text = transcription.text?.trim() || '';
 

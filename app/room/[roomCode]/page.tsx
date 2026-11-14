@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { getGroups, generateGroupSummary, type Group } from '@/lib/api';
-import { getSocket, disconnectSocket } from '@/lib/socket';
+import { getSocket } from '@/lib/socket';
 import type { RecorderHandle } from '@/components/MicRecorder';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import Transcript from '@/components/Transcript';
@@ -20,7 +20,6 @@ interface BroadcastData {
 export default function StudentRoom() {
   const params = useParams();
   const roomCode = params.roomCode as string;
-  const router = useRouter();
   const recorderRef = useRef<RecorderHandle>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -79,7 +78,7 @@ export default function StudentRoom() {
     };
   }, [roomCode, loadGroups]);
 
-  // Resume the original group after leaving, refreshing, or opening this room again.
+  // Refresh resumes a group; explicitly leaving clears this saved membership.
   useEffect(() => {
     const saved = localStorage.getItem('classdiscuss:group:' + roomCode);
     if (saved) { setMyGroupId(saved); setActiveGroupId(saved); }
@@ -113,13 +112,20 @@ export default function StudentRoom() {
     finally { setBusy(false); }
   }
 
-  async function leaveRoom() {
+  async function leaveGroup() {
     setBusy(true); setError('');
     try {
       await recorderRef.current?.flush(true);
-      disconnectSocket();
-      router.push('/student/join');
-    } catch { setError('Some audio could not be saved. Keep this page open and try Leave Room again.'); setBusy(false); }
+      const socket = getSocket();
+      if (socket.connected) {
+        const result = await socket.timeout(8000).emitWithAck('group:leave');
+        if (result?.error) throw new Error(result.error);
+      }
+      localStorage.removeItem('classdiscuss:group:' + roomCode);
+      setMyGroupId(null); setActiveGroupId(null); setBroadcast(null);
+      socket.emit('join:room', roomCode);
+    } catch { setError('Unable to finish leaving the group. Your saved discussion is retained. Check your connection and try again.'); }
+    finally { setBusy(false); }
   }
 
   function handleGroupCreated(group: Group) {
@@ -147,7 +153,7 @@ export default function StudentRoom() {
           <div className="flex flex-wrap gap-2">
             <DiscussionInstructions roomCode={roomCode} />
             <button disabled={!myGroupId || busy} onClick={() => void generateSummary()} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl font-semibold text-sm disabled:opacity-40">{busy ? 'Saving / processing…' : 'Generate AI Summary'}</button>
-            <button disabled={busy} onClick={() => void leaveRoom()} className="border border-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40">Leave Room</button>
+            <button disabled={busy || !myGroupId} onClick={() => void leaveGroup()} className="border border-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40">Leave Group</button>
           </div>
         </div>
         {error && <p role="alert" className="text-red-700 text-sm mt-2">{error}</p>}
@@ -160,7 +166,7 @@ export default function StudentRoom() {
           {activeGroup ? (
             <div className="grid grid-rows-2 gap-4 flex-1 min-h-0">
               <section className="overflow-y-auto rounded-xl border bg-white p-5 min-h-0">
-                <h2 className="text-sm font-semibold text-emerald-700 mb-3">AI Summary</h2>
+                <h2 className="text-sm font-semibold text-emerald-700 mb-3">Group Content Analysis</h2>
                 <EditableSummary key={activeGroup.id} group={activeGroup} isEditable={activeGroup.id === myGroupId} />
               </section>
               <section className="flex flex-col min-h-0 rounded-xl border bg-white p-5">
@@ -190,6 +196,7 @@ export default function StudentRoom() {
             myGroupId={myGroupId}
             activeGroupId={activeGroupId}
             onGroupCreated={handleGroupCreated}
+            onJoinGroup={handleGroupCreated}
             onViewGroup={setActiveGroupId}
             recorderRef={recorderRef}
             busy={busy}

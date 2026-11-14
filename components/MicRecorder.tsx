@@ -40,7 +40,7 @@ const MicRecorder = forwardRef<RecorderHandle, { groupId: string; disabled?: boo
       await retryUploads();
       if (mounted.current) setError('');
     }).catch(() => {
-      if (mounted.current) setError('Some audio has not been saved. Keep this page open; Stop Recording or Leave Room will retry.');
+      if (mounted.current) setError('Some audio has not been saved. Keep this page open; Stop Recording or Leave Group will retry.');
     }).finally(() => { if (mounted.current) setPending(n => n - 1); });
   }
 
@@ -90,7 +90,9 @@ const MicRecorder = forwardRef<RecorderHandle, { groupId: string; disabled?: boo
   async function start() {
     setStarting(true); setError('');
     try {
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.current = await navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true }
+      } });
       if (!mounted.current) { stream.current.getTracks().forEach(track => track.stop()); return; }
       active.current = true; setRecording(true); recordChunk();
     } catch (err) {

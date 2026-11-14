@@ -1,74 +1,7 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const OpenAI = require('openai').OpenAI;
-
 const NODE_TYPES = new Set(['CLAIM', 'EVIDENCE', 'EXAMPLE', 'PROPOSAL', 'QUESTION', 'UNCLASSIFIED']);
 const EDGE_TYPES = new Set(['SUPPORTS', 'ATTACKS', 'SIMILAR_TO']);
-const PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'argument_map_prompt.txt');
-
-const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] };
-const sourceSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['group_id', 'speaker_id', 'timestamp', 'source_location', 'original_quote'],
-  properties: {
-    group_id: nullableString,
-    speaker_id: nullableString,
-    timestamp: nullableString,
-    source_location: nullableString,
-    original_quote: { type: 'string' }
-  }
-};
-const schema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['nodes', 'edges'],
-  properties: {
-    nodes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['node_id', 'normalized_statement', 'primary_type', 'sources'],
-        properties: {
-          node_id: { type: 'string' },
-          normalized_statement: { type: 'string' },
-          primary_type: { type: 'string', enum: [...NODE_TYPES] },
-          sources: { type: 'array', items: sourceSchema }
-        }
-      }
-    },
-    edges: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['edge_id', 'source_node_id', 'target_node_id', 'relationship_type', 'evidence', 'justification'],
-        properties: {
-          edge_id: { type: 'string' },
-          source_node_id: { type: 'string' },
-          target_node_id: { type: 'string' },
-          relationship_type: { type: 'string', enum: [...EDGE_TYPES] },
-          evidence: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['node_id', 'original_quote'],
-              properties: {
-                node_id: { type: 'string' },
-                original_quote: { type: 'string' }
-              }
-            }
-          },
-          justification: { type: 'string' }
-        }
-      }
-    }
-  }
-};
 
 function originalQuote(text, quote) {
   if (typeof quote !== 'string' || !quote.trim()) return null;
@@ -133,56 +66,8 @@ function validateGraph(graph, transcript, allowedGroups) {
   return graph;
 }
 
-async function analyzeArgumentMap({ topic, instructions, groups }) {
-  const transcript = groups
-    .map(g => 'Group ID: ' + g.id + '\nGroup name: ' + g.name + '\nTranscript:\n' + g.transcript)
-    .join('\n\n-----\n\n');
-  const allowedGroups = new Map(groups.map(g => [g.id, g.transcript]));
-  const approvedPrompt = fs.readFileSync(PROMPT_PATH, 'utf8');
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const messages = [
-    { role: 'system', content: approvedPrompt +
-      '\n\nExecution context: Return ONLY the Part A strict JSON. Use ALL supplied groups and their ORIGINAL transcripts, never summaries. ' +
-      'Group IDs must exactly match a supplied Group ID. speaker_id, timestamp and source_location must be null. ' +
-      'Copy original_quote verbatim from the cited group transcript, preserving language, punctuation and spelling. ' +
-      'Perform both edge identification and verification. Return no invented sources.' },
-    { role: 'user', content: JSON.stringify({
-      teacher_topic: topic,
-      discussion_instructions: instructions || '',
-      discussion_transcript: transcript,
-      discussion_metadata: groups.map(g => ({ group_id: g.id, group_name: g.name, speaker_id: null, timestamp: null }))
-    }) }
-  ];
-  // Retry a rejected graph with precise validation feedback, never by loosening
-  // provenance rules or silently dropping invalid nodes / groups.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await client.chat.completions.create({
-      model: process.env.ARGUMENT_MAP_MODEL || 'gpt-4o-mini',
-      temperature: 0,
-      max_tokens: 12000,
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'classroom_argument_map', strict: true, schema }
-      },
-      messages
-    });
-    const msg = response.choices[0]?.message;
-    try {
-      if (!msg?.content || msg.refusal || response.choices[0]?.finish_reason !== 'stop') {
-        throw new Error('Model did not produce a complete graph. Return a complete, concise graph within the output limit.');
-      }
-      return validateGraph(JSON.parse(msg.content), transcript, allowedGroups);
-    } catch (error) {
-      console.warn('Argument map validation attempt ' + (attempt + 1) + ': ' + error.message);
-      if (attempt === 2) {
-        const failure = new Error('The AI could not produce a graph with verified original quotations after three attempts. Your transcripts are saved; please try again.');
-        failure.code = 'GRAPH_VALIDATION';
-        throw failure;
-      }
-      if (msg?.content) messages.push({ role: 'assistant', content: msg.content });
-      messages.push({ role: 'user', content: 'Validation rejected that graph: ' + error.message + '\nRebuild the complete graph from ALL original group transcripts. Fix this issue and verify every quotation and relationship again. Do not paraphrase original_quote or omit a group to avoid validation.' });
-    }
-  }
+async function analyzeArgumentMap(input) {
+  return require('./argumentMapIndexed').analyzeArgumentMap(input);
 }
 
 module.exports = { analyzeArgumentMap, validateGraph, originalQuote };

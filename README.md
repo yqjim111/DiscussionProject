@@ -146,10 +146,14 @@ The optional teacher-facing Argument Map feature reads original group transcript
 
 ### Session behavior
 
-- **Leave Room** saves the final audio segment before navigating away. Saved transcripts and summaries remain; the teacher sees a gray offline card when the last group connection leaves. Reopening the room in the same browser restores the group using local storage.
+- **Leave Group** saves the final audio segment and releases the current group without leaving the classroom. Students can create or join another group; saved transcripts and summaries remain. The teacher sees a gray offline card when the last group connection leaves. Refreshing resumes a group only if it was not explicitly left.
 - **Discussion Instruction** lets instructors edit the topic and instructions; saved changes are broadcast to students immediately.
 - There is no duration field, automatic group summarization, or timed room deletion. Data is removed only when an instructor explicitly ends the session.
-- Transcription updates approximately every four seconds plus upload/model latency. A browser microphone permission is required. Use Leave Room to save pending audio before navigating away.
+- Transcription updates approximately every four seconds plus upload/model latency. A browser microphone permission is required. Use Leave Group to save pending audio before regrouping.
+- Argument Map generation runs as a durable background job; returning to the dashboard or reloading does not cancel an accepted task. See [Argument Map workflow](docs/argument-map-workflow.md) for the source-indexed prompt contract, transparent excerpt-only fallbacks and worker recovery behavior.
+- Generate AI Summary extracts direct group-level propositions, reasons, evidence, examples and questions; it does not add an overall wrap-up or infer group consensus. Only the PDF's Overall Summary is a high-level synthesis.
+- Transcripts display as continuous prose without artificial line breaks at audio chunk boundaries. Stored source text is preserved for provenance and existing reports.
+- The browser requests echo cancellation, noise suppression and automatic gain control when supported. The backend passes a short suffix of the previous original transcript as recognition context. `TRANSCRIPTION_LANGUAGE` defaults to `en`; use `zh` for Chinese or `auto` for automatic detection. `TRANSCRIPTION_MODEL` defaults to `whisper-1`. This remains chunked file transcription, not live word-by-word recognition or speaker identification.
 - Run `npm test`, `npx tsc --noEmit`, and `npm run build` before deployment. Tests use mock AI/database adapters and do not incur API charges.
 
 ---

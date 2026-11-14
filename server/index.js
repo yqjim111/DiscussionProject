@@ -13,6 +13,7 @@ const groupRoutes = require('./routes/groups');
 const transcribeRoute = require('./routes/transcribe');
 const argumentMapRoute = require('./routes/argumentMap');
 const reportRoutes = require('./routes/report');
+const mapJobs = require('./services/argumentMapJobs');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
 const pool = require('./db/pool');
@@ -125,8 +126,8 @@ io.on('connection', (socket) => {
   socket.on('group:leave', (ack) => {
     presenceQueue = presenceQueue.then(async () => {
       const { groupId, roomCode } = socket.data;
-      socket.data = {};
-      if (roomCode) await socket.leave(roomCode);
+      // Leave only the group. Keep receiving classroom events and instructions.
+      socket.data = { roomCode };
       if (groupId) await publishPresence(roomCode, groupId);
       ack?.({ ok: true });
     }).catch(error => { console.error('Leave group:', error.message); ack?.({ error: 'Unable to leave' }); });
@@ -151,6 +152,7 @@ async function applySchema() {
 async function start() {
   await applySchema();               // create tables if they don't exist yet
   await redis.getClient();           // ensure Redis is connected
+  mapJobs.startWorker();
   // No automatic summaries or room expiry. Students request summaries explicitly;
   // data remains until an instructor deliberately ends the session.
 

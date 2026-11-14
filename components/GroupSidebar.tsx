@@ -10,6 +10,7 @@ interface Props {
   myGroupId: string | null;
   activeGroupId: string | null;
   onGroupCreated: (group: Group) => void;
+  onJoinGroup: (group: Group) => void;
   onViewGroup: (id: string) => void;
   recorderRef: Ref<RecorderHandle>;
   busy: boolean;
@@ -21,6 +22,7 @@ export default function GroupSidebar({
   myGroupId,
   activeGroupId,
   onGroupCreated,
+  onJoinGroup,
   onViewGroup,
   recorderRef,
   busy,
@@ -69,6 +71,7 @@ export default function GroupSidebar({
       {!myGroupId && (
         <div className="space-y-2">
           <button
+            disabled={busy}
             onClick={() => setShowForm((v) => !v)}
             className="w-full py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg
                        hover:bg-emerald-700 transition-colors"
@@ -156,6 +159,7 @@ export default function GroupSidebar({
               </div>
 
               <div className="flex-shrink-0 flex items-center gap-2">
+                {!myGroupId && <button disabled={busy} onClick={() => { setShowForm(false); onJoinGroup(group); }} className="text-xs font-semibold text-indigo-700 disabled:opacity-40">Join Group</button>}
                 {group.id === myGroupId && (
                   <span className="text-xs text-emerald-500 font-medium">You</span>
                 )}

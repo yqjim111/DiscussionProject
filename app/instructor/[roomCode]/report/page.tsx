@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import Script from 'next/script';
+import cytoscape from 'cytoscape';
 
 type Source = { group_id: string | null; speaker_id: string | null; original_quote: string };
 type MapNode = { node_id: string; normalized_statement: string; primary_type: string; sources: Source[] };
 type MapEdge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: string; justification: string };
-type MapData = { nodes: MapNode[]; edges: MapEdge[] };
+type MapData = { nodes: MapNode[]; edges: MapEdge[]; generation?: { mode: string; warning: string } };
 type Report = {
   room: {
     code: string;
@@ -42,7 +42,6 @@ export default function SessionReportPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [cyReady, setCyReady] = useState(false);
   const [mapImage, setMapImage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
 
@@ -66,9 +65,9 @@ export default function SessionReportPage() {
   }, [roomCode]);
 
   useEffect(() => {
-    if (!cyReady || !report?.argumentMap?.nodes.length || !containerRef.current || !window.cytoscape) return;
+    if (!report?.argumentMap?.nodes.length || !containerRef.current) return;
     const graph = report.argumentMap;
-    const diagram = window.cytoscape({
+    const diagram = cytoscape({
       container: containerRef.current,
       elements: [
         ...graph.nodes.map((node) => ({ data: { id: node.node_id, label: node.normalized_statement } })),
@@ -82,7 +81,7 @@ export default function SessionReportPage() {
           'background-color': '#e7ddff', 'border-color': '#bba8e5', 'border-width': 2,
           'label': 'data(label)', 'shape': 'round-rectangle', 'padding': '14px',
           'width': 'label', 'height': 'label', 'font-size': 12, 'text-wrap': 'wrap',
-          'text-max-width': 190, 'text-valign': 'center', 'text-halign': 'center', 'color': '#302550'
+          'text-max-width': '190px', 'text-valign': 'center', 'text-halign': 'center', 'color': '#302550'
         } },
         { selector: 'edge', style: {
           'line-color': '#788092', 'target-arrow-color': '#788092', 'target-arrow-shape': 'triangle',
@@ -93,7 +92,7 @@ export default function SessionReportPage() {
         { selector: 'edge[kind = "SIMILAR_TO"]', style: {
           'target-arrow-shape': 'none', 'line-style': 'dashed'
         } },
-      ],
+      ] as any,
       layout: { name: 'cose', animate: false, fit: true, padding: 45, numIter: 750 },
     });
     let disposed = false;
@@ -115,7 +114,7 @@ export default function SessionReportPage() {
       cancelAnimationFrame(frame);
       diagram.destroy();
     };
-  }, [cyReady, report]);
+  }, [report]);
 
   function printPDF() {
     if (!report?.contentAnalysis || generating || (report.argumentMap?.nodes.length && !mapImage)) return;
@@ -145,12 +144,6 @@ export default function SessionReportPage() {
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-800">
-      <Script
-        src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"
-        strategy="afterInteractive"
-        onLoad={() => setCyReady(true)}
-        onError={() => setError('Unable to load the diagram renderer. Check your connection and reload before exporting.')}
-      />
       <div className="no-print max-w-5xl mx-auto px-5 py-5 flex flex-wrap justify-between items-center gap-3">
         <Link href={'/instructor/' + roomCode} className="text-indigo-700 font-semibold">← Back to Instructor Dashboard</Link>
         <button onClick={() => void generateReport()} disabled={loading || generating || !report}
@@ -225,6 +218,7 @@ export default function SessionReportPage() {
             </div>}
             {map ? (
               <>
+                {map.generation?.warning && <p className="text-sm text-amber-800 mb-4">{map.generation.warning}</p>}
                 <p className="text-sm text-slate-600 mb-3">{map.nodes.length} nodes · {map.edges.length} relationships</p>
                 {map.nodes.length > 0 ? (
                   <>
