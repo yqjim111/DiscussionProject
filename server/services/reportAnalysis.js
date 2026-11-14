@@ -9,7 +9,7 @@ function snapshotHash(room, groups) {
   return crypto.createHash('sha256').update(JSON.stringify({
     topic: room.teacher_topic, instructions: room.discussion_instructions,
     instructor: room.instructor_name,
-    groups: groups.map(g => ({ id: g.id, name: g.name, members: g.members, transcript: g.transcript }))
+    groups: groups.map(g => ({ id: g.id, name: g.name, members: g.members, transcript: g.transcript, manualPoints: g.manualPoints || [] }))
   })).digest('hex');
 }
 

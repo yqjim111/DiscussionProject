@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db/pool');
 const redis = require('../services/redis');
 const { summarizeTranscript } = require('../services/summarize');
+const { getManualPoints, effectiveSummary } = require('../services/manualPoints');
 
 // POST /api/groups — create a group inside a room
 router.post('/', async (req, res) => {
@@ -64,12 +65,14 @@ router.get('/:roomCode', async (req, res) => {
 
     const sockets = await req.app.get('io').in(roomCode).fetchSockets();
     const groups = await Promise.all(
-      rows.map(async (g) => ({
-        ...g, id: String(g.id),
-        summary: await redis.getSummary(g.id),
-        transcript: await redis.getTranscript(g.id),
-        online: sockets.some(s => s.data.groupId === String(g.id))
-      }))
+      rows.map(async (g) => {
+        const [aiSummary, manualPoints, transcript] = await Promise.all([
+          redis.getAiSummary(g.id), getManualPoints(g.id), redis.getTranscript(g.id),
+        ]);
+        return { ...g, id: String(g.id), aiSummary, manualPoints, transcript,
+          summary: effectiveSummary(aiSummary, manualPoints),
+          online: sockets.some(s => s.data.groupId === String(g.id)) };
+      })
     );
 
     res.json({ groups });
@@ -77,6 +80,24 @@ router.get('/:roomCode', async (req, res) => {
     console.error('GET /api/groups/:roomCode', err.message);
     res.status(500).json({ error: 'Failed to fetch groups' });
   }
+});
+
+// No character or bullet-count truncation. Each write updates one contribution
+// so different students editing different bullets do not overwrite each other.
+router.put('/:groupId/points/:pointId', async (req, res) => {
+  const { groupId, pointId } = req.params;
+  if (![groupId, pointId].every(id => /^[a-f0-9-]{36}$/i.test(id))) return res.status(400).json({ error: 'Invalid group or point ID' });
+  const { text, replacesText = null } = req.body;
+  if (typeof text !== 'string' || (replacesText !== null && typeof replacesText !== 'string')) return res.status(400).json({ error: 'Invalid point text' });
+  try {
+    const { rows } = await pool.query('SELECT g.id, r.code FROM groups g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1', [groupId]);
+    if (!rows.length) return res.status(404).json({ error: 'Group not found' });
+    await pool.query(`INSERT INTO group_notes (group_id, id, text, replaces_text) VALUES ($1, $2, $3, $4)
+      ON CONFLICT (group_id, id) DO UPDATE SET text = EXCLUDED.text, replaces_text = EXCLUDED.replaces_text`, [groupId, pointId, text, replacesText]);
+    const update = { groupId, manualPoints: await getManualPoints(groupId), aiSummary: await redis.getAiSummary(groupId), summary: await redis.getSummary(groupId) };
+    req.app.get('io').to(rows[0].code).emit('group:points:update', update);
+    res.json(update);
+  } catch (error) { console.error('Save manual point:', error.message); res.status(500).json({ error: 'Unable to save point. Your draft is retained; retry saving.' }); }
 });
 
 // Summaries are generated only on an explicit student request.
@@ -89,12 +110,14 @@ router.post('/:groupId/summary', async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Group not found' });
     const transcript = await redis.getTranscript(groupId);
-    if (!transcript.trim()) return res.status(422).json({ error: 'Record some discussion before generating a summary.' });
-    const summary = await summarizeTranscript(transcript, { topic: rows[0].teacher_topic, instructions: rows[0].discussion_instructions });
+    const manualPoints = await getManualPoints(groupId);
+    if (!transcript.trim() && !manualPoints.some(p => p.text.trim())) return res.status(422).json({ error: 'Record discussion or add a bullet point before generating a summary.' });
+    const summary = await summarizeTranscript(transcript, { topic: rows[0].teacher_topic, instructions: rows[0].discussion_instructions, manualPoints });
     if (!summary) return res.status(422).json({ error: 'Record a little more discussion before generating a summary.' });
     await redis.setSummary(groupId, summary);
-    req.app.get('io').to(rows[0].code).emit('group:summary:update', { groupId, summary });
-    res.json({ summary });
+    const update = { groupId, summary: await redis.getSummary(groupId), aiSummary: summary, manualPoints: await getManualPoints(groupId) };
+    req.app.get('io').to(rows[0].code).emit('group:summary:update', update);
+    res.json(update);
   } catch (error) {
     console.error('POST group summary:', error.message);
     res.status(500).json({ error: 'Unable to generate summary. Please try again.' });

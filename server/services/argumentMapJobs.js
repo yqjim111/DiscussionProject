@@ -3,6 +3,8 @@
 const pool = require('../db/pool');
 const redis = require('./redis');
 const { analyzeArgumentMap } = require('./argumentMap');
+const { finishReport } = require('./reportStore');
+const { analysisText } = require('./manualPoints');
 let working = null;
 let interval = null;
 
@@ -25,6 +27,14 @@ async function enqueue(code, input) {
   return rows[0] || getJob(code);
 }
 
+async function requestReport(code, refreshSummary = false) {
+  const { rows } = await pool.query(`UPDATE argument_map_jobs
+    SET input = input || jsonb_build_object('reportRequested', true,
+      'refreshSummary', COALESCE((input->>'refreshSummary')::boolean, false) OR $2::boolean), updated_at = NOW()
+    WHERE room_code = $1 AND status IN ('queued', 'running') RETURNING *`, [code, refreshSummary]);
+  return rows[0] || null;
+}
+
 async function drain() {
   for (;;) {
     // Expired leases recover interrupted jobs after a backend restart. SKIP LOCKED
@@ -41,20 +51,40 @@ async function drain() {
     if (!job) return;
     try {
       const input = job.input;
-      const graph = await analyzeArgumentMap({ ...input, onProgress: async stage => {
+      const graph = input.reuseSavedMap ? (job.result || input.reuseGraph) : await analyzeArgumentMap({ ...input, onProgress: async stage => {
         await pool.query("UPDATE argument_map_jobs SET stage = $1, updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
       } });
-      const payload = {
-        ...graph, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
+      const payload = input.reuseSavedMap ? graph : {
+        ...graph, source_snapshot: input, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
         input: { source: 'original_transcripts', generated_at: new Date().toISOString(), topic: input.topic, instructions: input.instructions,
-          groups: input.groups.map(g => ({ id: g.id, name: g.name, characters: g.transcript.length })) }
+          groups: input.groups.map(g => ({ id: g.id, name: g.name, characters: analysisText(g).length, transcript_characters: g.transcript.length, manual_characters: (g.manualPoints || []).reduce((sum, p) => sum + p.text.length, 0) })) }
       };
-      const completed = await pool.query(`UPDATE argument_map_jobs SET status = 'succeeded', stage = 'Complete',
-        result = $1::jsonb, error = NULL, lease_until = NULL, updated_at = NOW() WHERE id = $2 AND status = 'running' RETURNING room_code`, [JSON.stringify(payload), job.id]);
-      if (completed.rows.length) {
+      if (!payload) throw new Error('Missing saved map');
+      // Publish the shared graph before generating the report summary. Both
+      // pages can read it even while the final summary is still running.
+      const published = await pool.query(`UPDATE argument_map_jobs SET result = $1::jsonb,
+        updated_at = NOW() WHERE id = $2 AND status = 'running' RETURNING room_code`, [JSON.stringify(payload), job.id]);
+      if (published.rows.length) {
         // PostgreSQL is authoritative; a cache failure cannot discard a completed map.
         try { await (await redis.getClient()).set('room:' + job.room_code + ':argumentMap', JSON.stringify(payload)); }
         catch (error) { console.error('Map cache:', error.message); }
+      }
+      for (;;) {
+        const latest = await getJob(job.room_code);
+        if (!latest || latest.id !== job.id || latest.status !== 'running') break;
+        const requested = Boolean(latest.input.reportRequested);
+        if (requested) {
+          await pool.query("UPDATE argument_map_jobs SET stage = $1, updated_at = NOW() WHERE id = $2 AND status = 'running'", ['Preparing report summary', job.id]);
+          await finishReport(job.room_code, payload, latest.input.refreshSummary, latest.input);
+        }
+        // A report request arriving after our read must be handled before this
+        // job can finish. An arriving request after completion queues reuse.
+        const completed = await pool.query(`UPDATE argument_map_jobs SET status = 'succeeded', stage = 'Complete',
+          result = $1::jsonb, error = NULL, lease_until = NULL, updated_at = NOW()
+          WHERE id = $2 AND status = 'running'
+          AND (COALESCE((input->>'reportRequested')::boolean, false) = false OR $3::boolean)
+          RETURNING room_code`, [JSON.stringify(payload), job.id, requested]);
+        if (completed.rows.length) break;
       }
     } catch (error) {
       console.error('Argument map background job:', error.message);
@@ -77,4 +107,4 @@ function startWorker() {
   interval.unref();
 }
 
-module.exports = { enqueue, getJob, publicJob, wakeWorker, startWorker };
+module.exports = { enqueue, getJob, publicJob, requestReport, wakeWorker, startWorker };

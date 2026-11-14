@@ -41,6 +41,11 @@ async function setSummary(groupId, summary) {
 }
 
 async function getSummary(groupId) {
+  const { getManualPoints, effectiveSummary } = require('./manualPoints');
+  return effectiveSummary(await getAiSummary(groupId), await getManualPoints(groupId));
+}
+
+async function getAiSummary(groupId) {
   const redis = await getClient();
   return (await redis.get(`group:${groupId}:summary`)) || '';
 }
@@ -63,6 +68,7 @@ module.exports = {
   getTranscript,
   setSummary,
   getSummary,
+  getAiSummary,
   getLastUpdated,
   getLastSummaryTime,
 };

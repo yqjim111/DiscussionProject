@@ -44,6 +44,16 @@ test('server restores exact quotes and group IDs from references without asking 
   assert.equal(result.edges[0].evidence[1].original_quote, 'Another original statement!');
 });
 
+test('typed-only discussions produce source-grounded nodes with explicit manual provenance', () => {
+  const input = [{ id: 'g1', name: 'Group', transcript: '', manualPoints: [{ id: 'point-1', text: 'An original typed argument.' }] }];
+  const indexed = indexSources(input);
+  assert.equal(indexed[0].source_kind, 'manual');
+  const graph = materializeGraph({ nodes: [{ node_id: 'N1', normalized_statement: 'A typed argument', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: ['Q1'] }], edges: [] }, indexed, input);
+  assert.equal(graph.nodes[0].sources[0].original_quote, 'An original typed argument.');
+  assert.equal(graph.nodes[0].sources[0].contribution_id, 'point-1');
+  assert.equal(graph.nodes[0].sources[0].source_kind, 'manual');
+});
+
 test('topic positions survive materialization independently of argument roles; invalid categories are rejected', () => {
   const positions = ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'];
   const nodes = positions.map((topic_position, i) => ({ node_id: 'N' + i,

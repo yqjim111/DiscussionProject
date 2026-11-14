@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { validateGraph } = require('./argumentMap');
 const { textModelOptions } = require('./textModel');
+const { analysisText } = require('./manualPoints');
 
 const nodeTypes = ['CLAIM', 'EVIDENCE', 'EXAMPLE', 'PROPOSAL', 'QUESTION', 'UNCLASSIFIED'];
 const schema = {
@@ -33,14 +34,18 @@ const schema = {
 function indexSources(groups) {
   const sources = [];
   for (const group of groups) {
-    const text = String(group.transcript || '');
-    const spans = text.match(/[^\n.!?。！？]+[.!?。！？]*|[.!?。！？]+/gu) || [];
-    for (const span of spans) {
-      const characters = Array.from(span);
-      for (let start = 0; start < characters.length; start += 360) {
-        const quote = characters.slice(start, start + 360).join('').trim();
-        if (!quote) continue;
-        sources.push({ source_id: 'Q' + (sources.length + 1), group_id: String(group.id), group_name: group.name, original_quote: quote });
+    const inputs = [{ text: group.transcript || '', source_kind: 'transcript', contribution_id: null },
+      ...(group.manualPoints || []).filter(p => p.text.trim()).map(p => ({ text: p.text, source_kind: 'manual', contribution_id: p.id }))];
+    for (const input of inputs) {
+      const text = String(input.text);
+      const spans = text.match(/[^\n.!?。！？]+[.!?。！？]*|[.!?。！？]+/gu) || [];
+      for (const span of spans) {
+        const characters = Array.from(span);
+        for (let start = 0; start < characters.length; start += 360) {
+          const quote = characters.slice(start, start + 360).join('').trim();
+          if (!quote) continue;
+          sources.push({ source_id: 'Q' + (sources.length + 1), group_id: String(group.id), group_name: group.name, original_quote: quote, source_kind: input.source_kind, contribution_id: input.contribution_id });
+        }
       }
     }
   }
@@ -48,7 +53,7 @@ function indexSources(groups) {
 }
 
 function toSource(source) {
-  return { group_id: source.group_id, speaker_id: null, timestamp: null, source_location: null, original_quote: source.original_quote };
+  return { group_id: source.group_id, speaker_id: null, timestamp: null, source_location: null, original_quote: source.original_quote, source_kind: source.source_kind, contribution_id: source.contribution_id };
 }
 
 function materializeGraph(result, sources, groups) {
@@ -72,7 +77,7 @@ function materializeGraph(result, sources, groups) {
     if (!a || !b) throw new Error('Edge references an unknown node');
     return { ...edge, evidence: [a, b].map(node => ({ node_id: node.node_id, original_quote: node.sources[0].original_quote })) };
   });
-  return validateGraph({ nodes, edges }, '', new Map(groups.map(group => [String(group.id), group.transcript])));
+  return validateGraph({ nodes, edges }, '', new Map(groups.map(group => [String(group.id), analysisText(group)])));
 }
 
 function extractiveGraph(sources, reason) {
@@ -90,7 +95,7 @@ async function analyzeArgumentMap({ topic, instructions, groups, onProgress = as
   const sources = indexSources(groups);
   if (!sources.length) return extractiveGraph([], 'No non-empty transcript text is available yet.');
   if (!process.env.OPENAI_API_KEY) return extractiveGraph(sources, 'AI analysis is unavailable because the backend API key is not configured. Showing original excerpts without inferred relationships.');
-  if (groups.reduce((sum, group) => sum + group.transcript.length, 0) > 180000) {
+  if (groups.reduce((sum, group) => sum + analysisText(group).length, 0) > 180000) {
     return extractiveGraph(sources, 'The input exceeds the AI analysis window. Showing all original excerpts without truncation or inferred relationships.');
   }
   const prompt = fs.readFileSync(path.join(__dirname, '../prompts/argument_map_prompt.txt'), 'utf8');

@@ -10,7 +10,7 @@ import cytoscape from 'cytoscape';
 import { graphElements, graphStyles, layoutGraph, fitGraph, categoryFor } from '@/lib/argumentMapView';
 import ArgumentMapLegend from '@/components/ArgumentMapLegend';
 
-type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string };
+type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string; source_kind?: string };
 type Node = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
 type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
@@ -84,7 +84,7 @@ export default function ArgumentMapPage() {
       style: graphStyles as any,
       layout: { name: 'preset' },
       wheelSensitivity: 0.18,
-      minZoom: 0.01,
+      minZoom: 0.000001,
       maxZoom: 3
     });
     cy.current = instance;
@@ -99,7 +99,7 @@ export default function ArgumentMapPage() {
         paragraphs: ['Node ' + node.node_id + ' · ' + node.primary_type + ' · ' + categoryFor(node).label],
         quotes: node.sources.map(s => ({
           meta: 'Group: ' + (graph.groups.find(g => g.id === s.group_id)?.name || s.group_id || 'Unknown') +
-            ' · Speaker: ' + (s.speaker_id || 'Unknown') +
+            ' · Source: ' + (s.source_kind === 'manual' ? 'Student-written point' : 'Recorded transcription') + ' · Speaker: ' + (s.speaker_id || 'Unknown') +
             ' · Time: ' + (s.timestamp || 'Not provided'),
           quote: s.original_quote
         }))
@@ -182,14 +182,15 @@ export default function ArgumentMapPage() {
             <div><strong>Teacher Topic</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.teacher_topic || 'No topic saved for this room'}</p></div>
             <div><strong>Discussion Instructions</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.discussion_instructions || 'None provided'}</p></div>
           </div>
-          <p className="text-xs text-slate-500">The analysis uses saved session information and original group transcripts. No additional fields are required.</p>
+          <p className="text-xs text-slate-500">The analysis uses saved session information, original transcripts and student-written points. No additional fields are required.</p>
           <DiscussionInstructions roomCode={roomCode} editable />
           <details className="text-sm border rounded-lg p-3">
-            <summary className="cursor-pointer font-semibold">Input: All Groups’ Original Transcripts ({inputGroups.length} groups)</summary>
-            <p className="text-xs text-slate-500 my-3">Includes offline groups. AI summaries are never used as input. Generation uses all text saved when the request begins; newer speech is included on the next generation.</p>
+            <summary className="cursor-pointer font-semibold">Input: All Groups’ Original Contributions ({inputGroups.length} groups)</summary>
+            <p className="text-xs text-slate-500 my-3">Includes offline groups. Includes saved student-written points. AI summaries are never used as input. Generation uses all text saved when the request begins; newer speech is included on the next generation.</p>
             {inputGroups.map(group => <div key={group.id} className="border-t py-3">
               <h3 className="font-semibold">{group.name} · {group.transcript?.length || 0} characters</h3>
               <p className="whitespace-pre-wrap break-words max-h-64 overflow-y-auto mt-2 text-slate-600">{group.transcript || 'No recorded transcript yet.'}</p>
+              {group.manualPoints?.filter(p => p.text.trim()).map(p => <p key={p.id} className="mt-2 whitespace-pre-wrap break-words text-slate-600"><strong>Student input:</strong> {p.text}</p>)}
             </div>)}
           </details>
           {graph?.input && <p className="text-xs text-slate-500">Last map input: {graph.input.groups.filter(g => g.characters > 0).length} groups with transcripts · {graph.input.groups.reduce((sum, g) => sum + g.characters, 0)} characters · {new Date(graph.input.generated_at).toLocaleTimeString()}</p>}

@@ -42,6 +42,9 @@ app.use((req, res, next) => {
   if (origin && !corsOrigin.includes(origin)) return res.status(403).json({ error: 'Origin not allowed' });
   next();
 });
+// Typed contributions have no product-level length/count limit. Other API
+// payloads keep their ordinary limits; audio uses its own multipart endpoint.
+app.use('/api/groups/:groupId/points', express.json({ limit: Infinity }));
 app.use(express.json());
 
 // Health check — used by Railway to confirm the server is alive

@@ -7,7 +7,7 @@ import { getSocket } from '@/lib/socket';
 import type { RecorderHandle } from '@/components/MicRecorder';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import Transcript from '@/components/Transcript';
-import EditableSummary from '@/components/EditableSummary';
+import EditableSummary, { type EditableSummaryHandle } from '@/components/EditableSummary';
 import GroupSidebar from '@/components/GroupSidebar';
 import BroadcastOverlay from '@/components/BroadcastOverlay';
 
@@ -20,6 +20,7 @@ interface BroadcastData {
 export default function StudentRoom() {
   const params = useParams();
   const roomCode = params.roomCode as string;
+  const summaryRef = useRef<EditableSummaryHandle>(null);
   const recorderRef = useRef<RecorderHandle>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -53,9 +54,11 @@ export default function StudentRoom() {
     };
     socket.on('group:transcript:update', transcriptUpdated);
 
-    socket.on('group:summary:update', ({ groupId, summary }: { groupId: string; summary: string }) => {
-      setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, summary } : g)));
-    });
+    const contentUpdated = (update: Partial<Group> & { groupId: string }) => {
+      setGroups(prev => prev.map(g => g.id === update.groupId ? { ...g, ...update } : g));
+    };
+    socket.on('group:summary:update', contentUpdated);
+    socket.on('group:points:update', contentUpdated);
 
     socket.on('group:created', ({ group }: { group: Group }) => {
       setGroups((prev) => {
@@ -70,7 +73,8 @@ export default function StudentRoom() {
 
     return () => {
       clearInterval(poll);
-      socket.off('group:summary:update');
+      socket.off('group:summary:update', contentUpdated);
+      socket.off('group:points:update', contentUpdated);
       socket.off('group:created');
       socket.off('broadcast:received');
       socket.off('connect', joinRoom);
@@ -104,9 +108,10 @@ export default function StudentRoom() {
     if (!myGroupId) return;
     setBusy(true); setError('');
     try {
+      await summaryRef.current?.flush();
       await recorderRef.current?.flush();
-      const { summary } = await generateGroupSummary(myGroupId);
-      setGroups(prev => prev.map(g => g.id === myGroupId ? { ...g, summary } : g));
+      const update = await generateGroupSummary(myGroupId);
+      setGroups(prev => prev.map(g => g.id === myGroupId ? { ...g, ...update } : g));
       setActiveGroupId(myGroupId);
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to generate summary.'); }
     finally { setBusy(false); }
@@ -115,6 +120,7 @@ export default function StudentRoom() {
   async function leaveGroup() {
     setBusy(true); setError('');
     try {
+      await summaryRef.current?.flush();
       await recorderRef.current?.flush(true);
       const socket = getSocket();
       if (socket.connected) {
@@ -167,7 +173,7 @@ export default function StudentRoom() {
             <div className="grid grid-rows-2 gap-4 flex-1 min-h-0">
               <section className="overflow-y-auto rounded-xl border bg-white p-5 min-h-0">
                 <h2 className="text-sm font-semibold text-emerald-700 mb-3">Group Content Analysis</h2>
-                <EditableSummary key={activeGroup.id} group={activeGroup} isEditable={activeGroup.id === myGroupId} />
+                <EditableSummary ref={summaryRef} key={activeGroup.id} group={activeGroup} isEditable={activeGroup.id === myGroupId} onSaved={update => setGroups(prev => prev.map(g => g.id === activeGroup.id ? { ...g, ...update } : g))} />
               </section>
               <section className="flex flex-col min-h-0 rounded-xl border bg-white p-5">
                 <h2 className="text-base font-bold mb-2">Original Transcription · {activeGroup.name}</h2>
@@ -197,7 +203,7 @@ export default function StudentRoom() {
             activeGroupId={activeGroupId}
             onGroupCreated={handleGroupCreated}
             onJoinGroup={handleGroupCreated}
-            onViewGroup={setActiveGroupId}
+            onViewGroup={id => { void (async () => { try { await summaryRef.current?.flush(); setActiveGroupId(id); } catch { setError('Save your points before switching groups.'); } })(); }}
             recorderRef={recorderRef}
             busy={busy}
           />

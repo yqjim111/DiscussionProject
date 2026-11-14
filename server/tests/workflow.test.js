@@ -47,7 +47,10 @@ const groups = [
   { id: crypto.randomUUID(), name: 'Two', members: ['B'], room_id: room.id },
 ];
 const jobs = new Map();
+const notes = new Map();
 mock('../db/pool', { query: async (sql, args = []) => {
+  if (sql.includes('FROM group_notes')) return { rows: [...notes.values()].filter(p => p.groupId === args[0]).map(({groupId, ...point}) => point) };
+  if (sql.includes('INSERT INTO group_notes')) { notes.set(args[0] + ':' + args[1], { groupId: args[0], id: args[1], text: args[2], replacesText: args[3] }); return { rows: [] }; }
   if (sql.includes('INSERT INTO argument_map_jobs')) {
     const old = jobs.get(args[0]);
     if (old && ['queued', 'running'].includes(old.status)) return { rows: [] };
@@ -60,10 +63,20 @@ mock('../db/pool', { query: async (sql, args = []) => {
     if (!job) return { rows: [] };
     job.status = 'running'; job.expired = false; return { rows: [structuredClone(job)] };
   }
+  if (sql.includes('SET input = input ||')) {
+    const job = jobs.get(args[0]);
+    if (!job || !['queued', 'running'].includes(job.status)) return { rows: [] };
+    job.input.reportRequested = true; job.input.refreshSummary = Boolean(job.input.refreshSummary || args[1]);
+    return { rows: [structuredClone(job)] };
+  }
   if (sql.includes('UPDATE argument_map_jobs')) {
     const job = [...jobs.values()].find(job => job.id === args[1]);
     if (!job || job.status !== 'running') return { rows: [] };
-    if (sql.includes("SET status = 'succeeded'")) { job.status = 'succeeded'; job.result = JSON.parse(args[0]); }
+    if (sql.includes("SET status = 'succeeded'")) {
+      if (job.input.reportRequested && !args[2]) return { rows: [] };
+      job.status = 'succeeded'; job.result = JSON.parse(args[0]);
+    }
+    else if (sql.includes('SET result =')) job.result = JSON.parse(args[0]);
     else if (sql.includes("SET status = 'failed'")) { job.status = 'failed'; job.error = args[0]; }
     else job.stage = args[0];
     return { rows: [{ room_code: job.room_code }] };
@@ -81,8 +94,9 @@ mock('../db/pool', { query: async (sql, args = []) => {
 } });
 
 let summaryCalls = 0;
+let lastSummaryInput = null;
 mock('../services/summarize', {
-  summarizeTranscript: async transcript => { summaryCalls++; return '• Summary of: ' + transcript; },
+  summarizeTranscript: async (transcript, context) => { summaryCalls++; lastSummaryInput = { transcript, context }; return '• Summary of: ' + transcript; },
   synthesizeAllSummaries: async () => 'Overall',
 });
 
@@ -91,6 +105,7 @@ let aiAttempts = 0;
 let transcribeCalls = 0;
 let failReport = false;
 let aiGate = null;
+let summaryGate = null;
 function graphFor(quote, groupId = groups[0].id) {
   return { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', sources: [{
     group_id: groupId, speaker_id: null, timestamp: null, source_location: null, original_quote: quote,
@@ -104,15 +119,10 @@ class FakeOpenAI {
       assert.equal('max_tokens' in input, false);
       assert.ok(input.max_completion_tokens > 0);
       aiInputs.push(structuredClone(input));
-      if (input.response_format.json_schema.name === 'classroom_report') {
+      if (input.response_format.json_schema.name === 'report_overall_summary') {
+        if (summaryGate) await summaryGate;
         if (failReport) throw Object.assign(new Error('Test quota failure'), { status: 429 });
-        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-          overall_summary: 'High-level classroom synthesis.', reference_proposition: 'AI should be used in class.',
-          statements: [{ statement_id: 'S1', statement: 'A shared classroom statement.', position: 'OTHER', sources: [
-            { group_id: groups[0].id, original_quote: 'Original first group speech.' },
-            { group_id: groups[1].id, original_quote: 'Original second group speech.' }
-          ] }]
-        }) } }] };
+        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ overall_summary: 'High-level classroom synthesis.' }) } }] };
       }
       if (aiGate) await aiGate;
       aiAttempts++;
@@ -146,6 +156,15 @@ async function socket() {
 const post = (url, body, authenticated = false) => fetch(base + url, {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...(authenticated ? { Cookie: cookie } : {}) }, body: JSON.stringify(body),
 });
+
+async function completeJobs() {
+  for (let i = 0; i < 50; i++) {
+    await require('../services/argumentMapJobs').wakeWorker();
+    if (![...jobs.values()].some(j => ['queued', 'running'].includes(j.status))) return;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  throw new Error('Background job did not finish');
+}
 
 test('quote validation only repairs whitespace and rejects paraphrase or incorrect group provenance', () => {
   assert.equal(originalQuote('one\n  two.', 'one two.'), 'one\n  two.');
@@ -221,6 +240,27 @@ test('teacher updates topic and instructions live; duration is not required', as
   assert.equal(denied.status, 401);
 });
 
+test('manual points are durable, visible live to instructors and included in summary input without altering transcripts', async () => {
+  const student = await socket();
+  await student.emitWithAck('group:join', { roomCode: room.code, groupId: groups[1].id });
+  const pointId = crypto.randomUUID();
+  const text = 'Typed contribution without a recording. ' + 'Detail '.repeat(20000);
+  const event = once(student, 'group:points:update');
+  const response = await fetch(base + '/api/groups/' + groups[1].id + '/points/' + pointId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+  assert.equal(response.status, 200, 'Typed input larger than the default 100 KB JSON limit must be accepted');
+  const saved = await response.json();
+  assert.equal(saved.manualPoints[0].text, text);
+  assert.equal((await event)[0].manualPoints[0].text, text);
+  const listed = await (await fetch(base + '/api/groups/' + room.code)).json();
+  assert.equal(listed.groups.find(g => g.id === groups[1].id).manualPoints[0].text, text);
+  await client.set('group:' + groups[1].id + ':transcript', '');
+  assert.equal((await post('/api/groups/' + groups[1].id + '/summary', {})).status, 200);
+  assert.equal(lastSummaryInput.transcript, '');
+  assert.equal(lastSummaryInput.context.manualPoints[0].text, text);
+  assert.equal(await redis.getTranscript(groups[1].id), '', 'Manual notes must not be mislabeled as recorded speech');
+  await fetch(base + '/api/groups/' + groups[1].id + '/points/' + pointId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'A saved student-written viewpoint.' }) });
+});
+
 test('Argument Map runs detached, deduplicates pending requests and restores the result after navigation', async () => {
   await client.set('group:' + groups[0].id + ':transcript', 'Original first group speech.');
   await client.set('group:' + groups[1].id + ':transcript', 'Original second group speech.');
@@ -243,6 +283,8 @@ test('Argument Map runs detached, deduplicates pending requests and restores the
   const input = JSON.parse(aiInputs[0].messages[1].content);
   assert.match(JSON.stringify(input.original_sources), /Original first group speech/);
   assert.match(JSON.stringify(input.original_sources), /Original second group speech/);
+  assert.ok(input.original_sources.some(s => s.source_kind === 'manual' && s.original_quote === 'A saved student-written viewpoint.'));
+  assert.equal(graph.source_snapshot.groups[1].manualPoints[0].text, 'A saved student-written viewpoint.');
   assert.doesNotMatch(JSON.stringify(input.original_sources), /SUMMARY MUST NOT BE INPUT/);
   assert.equal(input.teacher_topic, 'New topic');
   assert.equal(graph.input.groups.length, 2);
@@ -254,32 +296,121 @@ test('Argument Map runs detached, deduplicates pending requests and restores the
   assert.equal(job.status, 'succeeded', 'Expired leases must be recoverable after restart');
 });
 
-test('full report includes merged cross-group statements, diagram, members and exact original transcripts in one stable snapshot', async () => {
-  groups.push({ id: crypto.randomUUID(), name: 'Empty group', members: ['C'], room_id: room.id });
-  const response = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
-  assert.equal(response.status, 200);
-  const report = await response.json();
-  assert.equal(report.overallSummary, 'High-level classroom synthesis.');
-  assert.equal(report.contentAnalysis.statements.length, 1);
-  assert.deepEqual(report.contentAnalysis.statements[0].sources.map(s => s.group_id), [groups[0].id, groups[1].id]);
-  assert.ok(report.argumentMap.nodes.length);
-  assert.equal(report.groups.length, 3);
-  assert.deepEqual(report.groups[0].members, ['A']);
-  assert.equal(report.groups[0].transcript, 'Original first group speech.');
-  assert.equal(report.groups[2].transcript, '');
+test('report reuses the authoritative map, its four categories and exact source snapshot without repeating extraction', async () => {
+  const job = jobs.get(room.code);
+  const source = job.result.nodes[0].sources[0];
+  job.result.nodes = ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'].map((topic_position, i) => ({
+    node_id: 'N' + i, normalized_statement: 'Saved statement ' + i, primary_type: 'CLAIM', topic_position,
+    sources: [source, { ...source, group_id: groups[1].id, original_quote: 'Original second group speech.' }],
+  }));
+  job.result.edges = [{ edge_id: 'E0', source_node_id: 'N0', target_node_id: 'N3', relationship_type: 'SUPPORTS', justification: 'Saved verified relation', evidence: [] }];
+  groups.push({ id: crypto.randomUUID(), name: 'New group after map generation', members: ['C'], room_id: room.id });
+  // Simulate cache loss and an old report made by the previous, separate pipeline.
+  await client.del('room:' + room.code + ':argumentMap');
+  await client.set('room:' + room.code + ':reportSnapshot', JSON.stringify({ argumentMap: graphFor('Legacy quotation'), contentAnalysis: { statements: [{ statement: 'DO NOT REUSE OLD EXTRACTION' }] } }));
   const calls = aiInputs.length;
-  const saved = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
-  assert.equal(aiInputs.length, calls, 'Preview/export must not call AI');
-  assert.equal(saved.stale, false);
+  const preview = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(aiInputs.length, calls, 'Loading/exporting a report must never call AI');
+  assert.deepEqual(preview.argumentMap, job.result, 'PostgreSQL map wins over old reports and missing cache');
+  assert.equal(preview.contentAnalysis.statements.length, 4);
+  assert.deepEqual(preview.contentAnalysis.statements.map(s => s.position), ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL']);
+  assert.equal(preview.groups.length, 2, 'Appendix uses the captured map groups, not new groups');
+  assert.equal(preview.stale, true);
+  const response = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
+  assert.equal(response.status, 202);
+  await completeJobs();
+  const report = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(report.overallSummary, 'High-level classroom synthesis.');
+  assert.deepEqual(report.argumentMap, job.result);
+  assert.equal(aiInputs.length, calls + 1, 'Only one summary call; no new graph or content extraction');
+  assert.equal(aiInputs.at(-1).response_format.json_schema.name, 'report_overall_summary');
+  assert.equal(report.groups[0].transcript, 'Original first group speech.');
+  assert.deepEqual(report.groups[0].members, ['A']);
   await redis.appendTranscript(groups[0].id, 'New speech after the snapshot.');
   const later = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
   assert.equal(later.stale, true);
-  assert.equal(later.groups[0].transcript, report.groups[0].transcript, 'Appendix must match analysis snapshot');
+  assert.equal(later.groups[0].transcript, report.groups[0].transcript);
+  assert.equal(later.overallSummary, report.overallSummary);
   failReport = true;
-  const failed = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
-  assert.equal(failed.status, 502);
-  assert.equal(JSON.parse(await client.get('room:' + room.code + ':reportSnapshot')).generatedAt, report.generatedAt);
+  const failedSummary = await post('/api/rooms/' + room.code + '/report/generate', { refreshSummary: true }, true);
+  assert.equal(failedSummary.status, 202);
+  await completeJobs();
+  const preserved = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(preserved.overallSummary, report.overallSummary);
+  assert.deepEqual(preserved.argumentMap, report.argumentMap);
+  assert.match(preserved.summaryWarning, /available for export/);
+  // A newer map invalidates old summary but is immediately exportable without AI.
+  const latestJob = jobs.get(room.code);
+  latestJob.result = structuredClone(latestJob.result); latestJob.result.nodes[0].normalized_statement = 'New saved map statement';
+  const updated = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(updated.overallSummary, null);
+  assert.equal(updated.contentAnalysis.statements[0].statement, 'New saved map statement');
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {})).status, 401);
+});
+
+test('report-first generation and simultaneous map requests share one durable analysis and survive page navigation', async () => {
+  jobs.delete(room.code); await client.del('room:' + room.code + ':argumentMap'); await client.del('room:' + room.code + ':reportSnapshot');
+  failReport = false;
+  const calls = aiInputs.length;
+  let releaseMap, releaseSummary;
+  aiGate = new Promise(resolve => { releaseMap = resolve; });
+  summaryGate = new Promise(resolve => { releaseSummary = resolve; });
+  const first = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
+  assert.equal(first.status, 202);
+  const pending = await first.json();
+  assert.equal(pending.reportPending, true);
+  const repeated = await (await post('/api/rooms/' + room.code + '/report/generate', {}, true)).json();
+  const mapRequest = await (await post('/api/rooms/' + room.code + '/argument-map', {}, true)).json();
+  assert.equal(repeated.job.id, pending.job.id); assert.equal(mapRequest.job.id, pending.job.id);
+  releaseMap(); aiGate = null;
+  let map;
+  for (let i = 0; i < 100; i++) {
+    map = await (await fetch(base + '/api/rooms/' + room.code + '/argument-map', { headers: { Cookie: cookie } })).json();
+    if (map.graph) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.ok(map.graph?.nodes.length, 'Map is visible before the summary completes');
+  const reopening = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(reopening.reportPending, true);
+  assert.deepEqual(reopening.argumentMap, map.graph);
+  releaseSummary(); summaryGate = null;
+  await completeJobs();
+  const complete = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(complete.reportPending, false);
+  assert.equal(complete.overallSummary, 'High-level classroom synthesis.');
+  assert.deepEqual(complete.argumentMap, map.graph);
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['indexed_argument_map', 'report_overall_summary']);
+  const count = aiInputs.length;
+  assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 200);
+  assert.equal(aiInputs.length, count, 'Completed results must be reused');
+  const regenerate = await (await post('/api/rooms/' + room.code + '/argument-map', {}, true)).json();
+  assert.notEqual(regenerate.job.id, pending.job.id);
+  await completeJobs();
+  assert.equal(aiInputs.length, count + 1, 'Only explicit map regeneration reruns analysis');
+});
+
+test('a report request joins an existing map job, and persisted report intent recovers after restart', async () => {
+  jobs.delete(room.code); await client.del('room:' + room.code + ':argumentMap'); await client.del('room:' + room.code + ':reportSnapshot');
+  let release;
+  aiGate = new Promise(resolve => { release = resolve; });
+  const map = await (await post('/api/rooms/' + room.code + '/argument-map', {}, true)).json();
+  const report = await (await post('/api/rooms/' + room.code + '/report/generate', {}, true)).json();
+  assert.equal(report.job.id, map.job.id);
+  assert.equal(jobs.get(room.code).input.reportRequested, true, 'Report intent is persisted on the map job');
+  release(); aiGate = null; await completeJobs();
+  const graph = jobs.get(room.code).result;
+  assert.ok(JSON.parse(await client.get('room:' + room.code + ':reportSnapshot')).overallSummary);
+  // Recover an expired lease with a completed map but unfinished report. No new
+  // extraction should happen when the worker resumes this persisted task.
+  await client.del('room:' + room.code + ':reportSnapshot');
+  const job = jobs.get(room.code);
+  job.status = 'running'; job.expired = true;
+  job.input = { ...graph.source_snapshot, reportRequested: true, reuseSavedMap: true };
+  const calls = aiInputs.length;
+  await completeJobs();
+  assert.equal(job.status, 'succeeded');
+  assert.deepEqual(job.result, graph);
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['report_overall_summary']);
 });
 
 test('content analysis rejects fabricated provenance, duplicated statements and forced positions without a proposition', () => {

@@ -27,7 +27,7 @@ test('group content analysis uses original words and contextual topic, with no f
   const transcript = 'AI helps with ideas. But answers can be wrong. How do we verify them?';
   const result = await summarizeTranscript(transcript, { topic: 'AI in design', instructions: 'Consider examples' });
   assert.equal(result, '• AI can help generate ideas.\n• AI answers can be inaccurate.\n• How can answers be verified?');
-  assert.deepEqual(JSON.parse(calls.at(-1).messages[1].content), { topic: 'AI in design', instructions: 'Consider examples', original_transcript: transcript });
+  assert.deepEqual(JSON.parse(calls.at(-1).messages[1].content), { topic: 'AI in design', instructions: 'Consider examples', original_transcript: transcript, manual_contributions: [] });
   assert.equal(calls.at(-1).response_format.json_schema.name, 'group_content_analysis');
   assert.match(calls.at(-1).messages[0].content, /do not force a fixed bullet count/i);
   assert.match(calls.at(-1).messages[0].content, /Do not force FOR\/AGAINST labels/);
@@ -43,6 +43,12 @@ test('a generic overall wrap-up is rejected and re-extracted as direct statement
   assert.equal(calls.length - before, 2);
   assert.doesNotMatch(result, /Overall|the group/i);
   assert.match(result, /AI can assist with ideation/);
+});
+
+test('AI content analysis includes saved typed contributions even without an audio transcript', async () => {
+  responses = [['A typed classroom viewpoint.']];
+  assert.equal(await summarizeTranscript('', { manualPoints: [{ id: 'p1', text: 'A typed classroom viewpoint.' }] }), '• A typed classroom viewpoint.');
+  assert.deepEqual(JSON.parse(calls.at(-1).messages[1].content).manual_contributions, ['A typed classroom viewpoint.']);
 });
 
 test('short substantive input is not discarded or padded; an empty extraction returns no synthetic summary', async () => {

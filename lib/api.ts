@@ -19,11 +19,14 @@ export interface Room {
   duration_minutes: number | null;
 }
 
+export interface ManualPoint { id: string; text: string; replacesText?: string | null }
 export interface Group {
   id: string;
   name: string;
   members: string[];
   summary: string;
+  aiSummary?: string;
+  manualPoints?: ManualPoint[];
   transcript?: string;
   online?: boolean;
   created_at?: string;
@@ -59,8 +62,12 @@ export function updateRoom(code: string, data: { teacher_topic: string; discussi
   });
 }
 
-export function generateGroupSummary(groupId: string): Promise<{ summary: string }> {
+export function generateGroupSummary(groupId: string): Promise<{ summary: string; aiSummary: string; manualPoints: ManualPoint[] }> {
   return request(`/api/groups/${groupId}/summary`, { method: 'POST' });
+}
+
+export function saveManualPoint(groupId: string, point: ManualPoint): Promise<{ groupId: string; summary: string; aiSummary: string; manualPoints: ManualPoint[] }> {
+  return request(`/api/groups/${groupId}/points/${point.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(point) });
 }
 
 export function createGroup(data: {

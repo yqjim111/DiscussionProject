@@ -8,6 +8,7 @@ import { getSocket } from '@/lib/socket';
 import GroupCard from '@/components/GroupCard';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import ArgumentMapLink from '@/components/ArgumentMapLink';
+import GroupDiscussionDialog from '@/components/GroupDiscussionDialog';
 
 export default function InstructorDashboard() {
   const params = useParams();
@@ -15,6 +16,8 @@ export default function InstructorDashboard() {
   const roomCode = params.roomCode as string;
 
   const [groups, setGroups] = useState<Group[]>([]);
+  const [viewGroupId, setViewGroupId] = useState<string | null>(null);
+  const viewedGroup = groups.find(g => g.id === viewGroupId);
   const [overallSummary, setOverallSummary] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -33,7 +36,7 @@ export default function InstructorDashboard() {
 
   useEffect(() => {
     loadGroups();
-    const poll = setInterval(loadGroups, 10_000);
+    const poll = setInterval(loadGroups, 3000);
 
     const socket = getSocket();
     const join = () => socket.emit('join:room', roomCode);
@@ -47,9 +50,11 @@ export default function InstructorDashboard() {
     socket.on('group:presence', presence);
     socket.on('group:transcript:update', transcript);
 
-    socket.on('group:summary:update', ({ groupId, summary }: { groupId: string; summary: string }) => {
-      setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, summary } : g)));
-    });
+    const contentUpdated = (update: Partial<Group> & { groupId: string }) => {
+      setGroups(prev => prev.map(g => g.id === update.groupId ? { ...g, ...update } : g));
+    };
+    socket.on('group:summary:update', contentUpdated);
+    socket.on('group:points:update', contentUpdated);
 
     socket.on('group:created', ({ group }: { group: Group }) => {
       setGroups((prev) => {
@@ -67,7 +72,8 @@ export default function InstructorDashboard() {
 
     return () => {
       clearInterval(poll);
-      socket.off('group:summary:update');
+      socket.off('group:summary:update', contentUpdated);
+      socket.off('group:points:update', contentUpdated);
       socket.off('group:created');
       socket.off('connect', join);
       socket.off('group:presence', presence);
@@ -174,11 +180,13 @@ export default function InstructorDashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {groups.map((group) => (
-              <GroupCard key={group.id} group={group} onBroadcast={() => handleBroadcast(group)} />
+              <GroupCard key={group.id} group={group} onView={() => setViewGroupId(group.id)} onBroadcast={() => handleBroadcast(group)} />
             ))}
           </div>
         )}
       </main>
+
+      {viewedGroup && <GroupDiscussionDialog group={viewedGroup} onClose={() => setViewGroupId(null)} />}
 
       {/* Overall summary modal */}
       {showModal && overallSummary && (

@@ -1,6 +1,6 @@
 # Argument Map execution workflow
 
-1. POST `/api/rooms/:code/argument-map` captures every group's original transcript, including offline groups, and returns HTTP 202 with a job ID. No summary is used as input.
+1. POST `/api/rooms/:code/argument-map` captures every group's original transcript and saved student-written contributions, including offline groups, and returns HTTP 202 with a job ID. No AI summary is used as input. Each source retains its recording/manual origin; the source snapshot also retains group members and full typed text.
 2. PostgreSQL stores the queued job and its input. A backend worker claims it with a lease; the browser can navigate away or close. Duplicate clicks reuse the pending job. The startup worker recovers queued jobs and expired running leases after restart.
 3. Original texts are indexed as exact excerpts Q1, Q2, etc. Each excerpt retains its group ID and original wording. Long spans are split without silently dropping text.
 4. The established semantic rules and boundary examples in `server/prompts/argument_map_prompt.txt` guide atomic proposition extraction, global semantic deduplication, support/attack/similarity identification and verification. The execution contract in `server/services/argumentMapIndexed.js` replaces the old quote-copying JSON with source-ID selection. The model must not generate quotes, group UUIDs, speaker metadata or HTML.

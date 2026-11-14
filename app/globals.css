@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Role colors apply to controls and page accents. Argument-map node colors
+   retain their separate positive/negative/off-topic/neutral meanings. */
+.role-student {
+  --role-soft: #f0fdf4; --role-button: #d1fae5; --role-hover: #a7f3d0;
+  --role-ink: #065f46; --role-strong: #047857; --role-border: #a7e0c3;
+}
+.role-instructor {
+  --role-soft: #fff3ec; --role-button: #d83b11; --role-hover: #bb3210;
+  --role-ink: #fff; --role-strong: #bd3814; --role-border: #f5c5b2;
+}
+.role-theme { min-height: 100vh; accent-color: var(--role-strong); }
+.role-theme .bg-gradient-to-br { background-image: linear-gradient(135deg, #fff, var(--role-soft)); }
+.role-theme :is(.bg-gray-50, .bg-slate-50, .bg-indigo-50, .bg-emerald-50, .bg-purple-50) { background-color: var(--role-soft); }
+.role-theme :is(.text-indigo-400, .text-indigo-500, .text-indigo-600, .text-indigo-700, .text-indigo-800, .text-emerald-500, .text-emerald-600, .text-emerald-700, .text-emerald-800, .text-blue-600, .text-blue-700, .text-violet-600, .text-orange-700) { color: var(--role-strong); }
+.role-theme :is(.bg-indigo-100, .bg-emerald-100, .bg-violet-100, .bg-orange-100) { background-color: var(--role-soft); }
+.role-theme :is(.bg-indigo-600, .bg-indigo-700, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-blue-600, .bg-violet-600, .bg-orange-600) { background-color: var(--role-button); color: var(--role-ink); }
+.role-theme :is(.bg-indigo-600, .bg-indigo-700, .bg-emerald-500, .bg-emerald-600, .bg-emerald-700, .bg-blue-600, .bg-violet-600, .bg-orange-600):hover:not(:disabled) { background-color: var(--role-hover); }
+.role-theme :is(.border-indigo-600, .border-emerald-600, .border-violet-300) { border-color: var(--role-border); }
+.role-theme textarea:focus, .role-theme input:focus { outline-color: var(--role-strong); border-color: var(--role-border); }
+.role-instructor .section-heading { color: var(--role-strong); border-color: var(--role-border); }
+.role-instructor .bg-red-600 { background-color: var(--role-button); }
+.role-instructor .bg-red-600:hover { background-color: var(--role-hover); }
+.role-student [class~="bg-indigo-950/90"] { background-color: rgb(6 95 70 / 90%); }
