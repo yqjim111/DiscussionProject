@@ -6,7 +6,12 @@ module.exports = {
     './lib/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        sans: ['Helvetica', 'Arial', 'sans-serif'],
+        mono: ['Helvetica', 'Arial', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
 };
