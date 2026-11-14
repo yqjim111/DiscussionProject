@@ -7,24 +7,17 @@ import { getRoom, getGroups, type Room, type Group } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import cytoscape from 'cytoscape';
+import { graphElements, graphStyles, layoutGraph, fitGraph, categoryFor } from '@/lib/argumentMapView';
+import ArgumentMapLegend from '@/components/ArgumentMapLegend';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string };
-type Node = { node_id: string; normalized_statement: string; primary_type: string; sources: Source[] };
+type Node = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
 type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
 type Job = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; stage: string; error?: string };
 declare global { interface Window { cytoscape?: (config: any) => any } }
 
 const API_BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
-const layout = (count = 0) => count > 100 ? { name: 'grid', animate: false, fit: true, padding: 45 } : ({ name: 'cose', animate: false, fit: true, padding: 45, nodeRepulsion: 600000, idealEdgeLength: 100, numIter: 650, gravity: 0.75 });
-const styles = [
-  { selector: 'node', style: { 'background-color': '#e7ddff', 'border-color': '#bba8e5', 'border-width': 2, label: 'data(label)', color: '#2d2450', 'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 190, 'text-valign': 'center', 'text-halign': 'center', 'padding': '16px', shape: 'round-rectangle', width: 'label', height: 'label', 'min-width': 140, 'min-height': 60 } },
-  { selector: 'edge', style: { width: 2, 'line-color': '#788092', 'target-arrow-color': '#788092', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', label: 'data(label)', 'font-size': 10, color: '#4b5563', 'text-background-color': '#fff', 'text-background-opacity': 1, 'text-background-padding': '4px', 'text-rotation': 'autorotate' } },
-  { selector: 'edge[relationship_type = "SIMILAR_TO"]', style: { 'target-arrow-shape': 'none', 'line-style': 'dashed' } },
-  { selector: '.dimmed', style: { opacity: 0.12 } },
-  { selector: ':selected', style: { 'border-color': '#6652bd', 'border-width': 3 } }
-];
-
 export default function ArgumentMapPage() {
   const params = useParams();
   const roomCode = String(params.roomCode || '');
@@ -87,23 +80,23 @@ export default function ArgumentMapPage() {
     if (cy.current) cy.current.destroy();
     const instance = cytoscape({
       container: container.current,
-      elements: [
-        ...graph.nodes.map(n => ({ data: { id: n.node_id, label: n.normalized_statement, sources: n.sources, type: n.primary_type } })),
-        ...graph.edges.map(e => ({ data: { id: e.edge_id, source: e.source_node_id, target: e.target_node_id, label: e.relationship_type, relationship_type: e.relationship_type, evidence: e.evidence, justification: e.justification } }))
-      ],
-      style: styles as any,
-      layout: layout(graph.nodes.length) as any,
+      elements: graphElements(graph),
+      style: graphStyles as any,
+      layout: { name: 'preset' },
       wheelSensitivity: 0.18,
-      minZoom: 0.15,
+      minZoom: 0.01,
       maxZoom: 3
     });
     cy.current = instance;
+    layoutGraph(instance);
+    const observer = new ResizeObserver(() => { instance.resize(); fitGraph(instance); });
+    observer.observe(container.current);
     instance.on('tap', 'node', (event: any) => {
       const node = graph.nodes.find(n => n.node_id === event.target.id());
       if (!node) return;
       setDetails({
         title: node.normalized_statement,
-        paragraphs: ['Node ' + node.node_id + ' · ' + node.primary_type],
+        paragraphs: ['Node ' + node.node_id + ' · ' + node.primary_type + ' · ' + categoryFor(node).label],
         quotes: node.sources.map(s => ({
           meta: 'Group: ' + (graph.groups.find(g => g.id === s.group_id)?.name || s.group_id || 'Unknown') +
             ' · Speaker: ' + (s.speaker_id || 'Unknown') +
@@ -127,7 +120,7 @@ export default function ArgumentMapPage() {
     });
     setGroupFilter('*');
     setDetails(null);
-    return () => { instance.destroy(); if (cy.current === instance) cy.current = null; };
+    return () => { observer.disconnect(); instance.destroy(); if (cy.current === instance) cy.current = null; };
   }, [graph]);
 
   useEffect(() => {
@@ -219,11 +212,12 @@ export default function ArgumentMapPage() {
                 <option value="*">All Groups</option>
                 {graph?.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
-              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current?.fit(undefined, 40)}>Fit view</button>
-              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current?.layout(layout(graph?.nodes.length)).run()}>Reset layout</button>
+              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current && fitGraph(cy.current)}>Fit view</button>
+              <button type="button" className="border rounded-lg p-2 text-sm" onClick={() => cy.current && layoutGraph(cy.current)}>Reset layout</button>
               <button type="button" className="border rounded-lg p-2 text-sm" disabled={!graph} onClick={exportJSON}>Export JSON</button>
             </div>
           </div>
+          <ArgumentMapLegend />
           <div ref={container} className="w-full rounded-xl border border-slate-200 bg-white" style={{ height: 550 }} role="img" aria-label="Interactive argument network" />
           {graph && !graph.nodes.length && <p className="text-sm text-slate-600 mt-3">No substantive argument statements were identified. The original transcripts remain available in the input panel; no arguments or relationships have been invented.</p>}
           <p className="text-xs text-slate-500 mt-3">SUPPORTS → directed · ATTACKS → directed · SIMILAR_TO — undirected. Relationship labels appear on each edge. Click a node or edge to inspect its sources.</p>

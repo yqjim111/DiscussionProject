@@ -13,7 +13,7 @@ class FakeOpenAI {
       calls++;
       if (mode === 'failure') throw Object.assign(new Error('quota'), { status: 429 });
       const result = mode === 'empty' ? { nodes: [], edges: [] } : {
-        nodes: [{ node_id: 'N1', normalized_statement: 'A statement', primary_type: 'CLAIM', source_ids: [mode === 'invalid' ? 'FAKE' : 'Q1'] }], edges: []
+        nodes: [{ node_id: 'N1', normalized_statement: 'A statement', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: [mode === 'invalid' ? 'FAKE' : 'Q1'] }], edges: []
       };
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
     } } };
@@ -36,12 +36,21 @@ test('source indexing retains exact wording for Unicode, quotes, newlines and lo
 test('server restores exact quotes and group IDs from references without asking the model to copy them', () => {
   const sources = indexSources(groups);
   const result = materializeGraph({ nodes: [
-    { node_id: 'N1', normalized_statement: 'Claim one', primary_type: 'CLAIM', source_ids: ['Q1'] },
-    { node_id: 'N2', normalized_statement: 'Claim two', primary_type: 'CLAIM', source_ids: ['Q2'] }
+    { node_id: 'N1', normalized_statement: 'Claim one', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: ['Q1'] },
+    { node_id: 'N2', normalized_statement: 'Claim two', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: ['Q2'] }
   ], edges: [{ edge_id: 'E1', source_node_id: 'N1', target_node_id: 'N2', relationship_type: 'SUPPORTS', justification: 'A grounded reason' }] }, sources, groups);
   assert.equal(result.nodes[0].sources[0].group_id, groups[0].id);
   assert.equal(result.nodes[0].sources[0].original_quote, 'A quoted statement.');
   assert.equal(result.edges[0].evidence[1].original_quote, 'Another original statement!');
+});
+
+test('topic positions survive materialization independently of argument roles; invalid categories are rejected', () => {
+  const positions = ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'];
+  const nodes = positions.map((topic_position, i) => ({ node_id: 'N' + i,
+    normalized_statement: 'Source-grounded statement', primary_type: 'CLAIM', topic_position, source_ids: ['Q1'] }));
+  const sources = indexSources(groups);
+  assert.deepEqual(materializeGraph({ nodes, edges: [] }, sources, groups).nodes.map(n => n.topic_position), positions);
+  assert.throws(() => materializeGraph({ nodes: [{ ...nodes[0], topic_position: 'SUPPORTS' }], edges: [] }, sources, groups), /topic_position/);
 });
 
 test('invalid model references produce a clearly labeled original-excerpt graph after bounded retries', async () => {

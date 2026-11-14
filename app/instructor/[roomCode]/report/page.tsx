@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import cytoscape from 'cytoscape';
+import { graphElements, graphStyles, layoutGraph } from '@/lib/argumentMapView';
+import ArgumentMapLegend from '@/components/ArgumentMapLegend';
 
 type Source = { group_id: string | null; speaker_id: string | null; original_quote: string };
-type MapNode = { node_id: string; normalized_statement: string; primary_type: string; sources: Source[] };
+type MapNode = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string; sources: Source[] };
 type MapEdge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: string; justification: string };
 type MapData = { nodes: MapNode[]; edges: MapEdge[]; generation?: { mode: string; warning: string } };
 type Report = {
@@ -69,32 +71,12 @@ export default function SessionReportPage() {
     const graph = report.argumentMap;
     const diagram = cytoscape({
       container: containerRef.current,
-      elements: [
-        ...graph.nodes.map((node) => ({ data: { id: node.node_id, label: node.normalized_statement } })),
-        ...graph.edges.map((edge) => ({ data: {
-          id: edge.edge_id, source: edge.source_node_id, target: edge.target_node_id,
-          label: edge.relationship_type, kind: edge.relationship_type,
-        } })),
-      ],
-      style: [
-        { selector: 'node', style: {
-          'background-color': '#e7ddff', 'border-color': '#bba8e5', 'border-width': 2,
-          'label': 'data(label)', 'shape': 'round-rectangle', 'padding': '14px',
-          'width': 'label', 'height': 'label', 'font-size': 12, 'text-wrap': 'wrap',
-          'text-max-width': '190px', 'text-valign': 'center', 'text-halign': 'center', 'color': '#302550'
-        } },
-        { selector: 'edge', style: {
-          'line-color': '#788092', 'target-arrow-color': '#788092', 'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier', 'width': 2, 'label': 'data(label)',
-          'font-size': 10, 'text-rotation': 'autorotate', 'color': '#344054',
-          'text-background-color': '#fff', 'text-background-opacity': 1
-        } },
-        { selector: 'edge[kind = "SIMILAR_TO"]', style: {
-          'target-arrow-shape': 'none', 'line-style': 'dashed'
-        } },
-      ] as any,
-      layout: { name: 'cose', animate: false, fit: true, padding: 45, numIter: 750 },
+      elements: graphElements(graph),
+      style: graphStyles as any,
+      layout: { name: 'preset' },
+      minZoom: 0.01,
     });
+    layoutGraph(diagram);
     let disposed = false;
     const capture = () => {
       if (disposed) return;
@@ -222,27 +204,13 @@ export default function SessionReportPage() {
                 <p className="text-sm text-slate-600 mb-3">{map.nodes.length} nodes · {map.edges.length} relationships</p>
                 {map.nodes.length > 0 ? (
                   <>
+                    <ArgumentMapLegend />
                     <div ref={containerRef} className="no-print w-full h-[600px] border rounded-lg" aria-hidden="true" />
                     {mapImage
                       ? <img src={mapImage} alt="Saved argument relationship diagram" className="map-print-image w-full object-contain border rounded-lg" />
                       : <p className="text-xs text-slate-500 no-print">Preparing printable diagram…</p>}
                   </>
                 ) : <p className="text-sm text-slate-500">No argument nodes were produced.</p>}
-                <h3 className="font-bold text-base mt-6 mb-3">Graph Evidence</h3>
-                <ol className="space-y-3 text-sm">
-                  {map.nodes.map((node) => (
-                    <li key={node.node_id} className="report-entry">
-                      <strong>{node.node_id} · {node.primary_type}</strong>
-                      <p className="mt-1">{node.normalized_statement}</p>
-                      {(node.sources || []).map((source, index) => (
-                        <p key={index} className="text-xs text-slate-600 mt-1">
-                          {report.groups.find((group) => group.id === source.group_id)?.name || 'Unknown group'}
-                          {source.speaker_id ? ' · ' + source.speaker_id : ''}: “{source.original_quote}”
-                        </p>
-                      ))}
-                    </li>
-                  ))}
-                </ol>
                 <h3 className="font-bold text-base mt-7 mb-3">Argument Relationships</h3>
                 {map.edges.length ? (
                   <ol className="space-y-3 text-sm">
@@ -269,7 +237,7 @@ export default function SessionReportPage() {
             {report.groups.map((group, index) => <div key={group.id} className="transcript-group mb-8">
               <h3 className="text-lg font-bold mb-2">Group {index + 1}: {group.name}</h3>
               <p className="text-sm mb-4"><strong>Members:</strong> {group.members?.length ? group.members.join(', ') : 'Not provided'}</p>
-              <div className="transcript-text whitespace-pre-wrap break-words text-sm leading-7">{group.transcript || 'No transcription recorded for this group.'}</div>
+              <div className="transcript-text whitespace-normal break-words text-sm leading-7">{group.transcript || 'No transcription recorded for this group.'}</div>
             </div>)}
             {!report.groups.length && <p className="text-sm text-slate-500">No groups recorded.</p>}
           </section>
@@ -292,7 +260,7 @@ export default function SessionReportPage() {
           h2, h3 { break-after: avoid; page-break-after: avoid; }
           .transcript-appendix { break-before: page; page-break-before: always; }
           .transcript-group + .transcript-group { break-before: page; page-break-before: always; }
-          .transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; orphans: 3; widows: 3; }
+          .transcript-text { white-space: normal; overflow-wrap: anywhere; orphans: 3; widows: 3; }
         }
       `}</style>
     </main>

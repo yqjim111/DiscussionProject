@@ -117,7 +117,7 @@ class FakeOpenAI {
       if (aiGate) await aiGate;
       aiAttempts++;
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(
-        { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', source_ids: [aiAttempts === 1 ? 'UNKNOWN' : 'Q1'] }], edges: [] }
+        { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: [aiAttempts === 1 ? 'UNKNOWN' : 'Q1'] }], edges: [] }
       ) } }] };
     } } };
     this.audio = { transcriptions: { create: async () => { transcribeCalls++; return { text: 'Recorded speech.' }; } } };

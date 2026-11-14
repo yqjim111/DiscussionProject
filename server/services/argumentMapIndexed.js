@@ -10,10 +10,11 @@ const nodeTypes = ['CLAIM', 'EVIDENCE', 'EXAMPLE', 'PROPOSAL', 'QUESTION', 'UNCL
 const schema = {
   type: 'object', additionalProperties: false, required: ['nodes', 'edges'], properties: {
     nodes: { type: 'array', items: {
-      type: 'object', additionalProperties: false, required: ['node_id', 'normalized_statement', 'primary_type', 'source_ids'],
+      type: 'object', additionalProperties: false, required: ['node_id', 'normalized_statement', 'primary_type', 'topic_position', 'source_ids'],
       properties: {
         node_id: { type: 'string' }, normalized_statement: { type: 'string' },
-        primary_type: { type: 'string', enum: nodeTypes }, source_ids: { type: 'array', items: { type: 'string' } }
+        primary_type: { type: 'string', enum: nodeTypes },
+        topic_position: { type: 'string', enum: ['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'] }, source_ids: { type: 'array', items: { type: 'string' } }
       }
     } },
     edges: { type: 'array', items: {
@@ -55,7 +56,9 @@ function materializeGraph(result, sources, groups) {
   const bySource = new Map(sources.map(source => [source.source_id, source]));
   const nodes = result.nodes.map(node => {
     if (!Array.isArray(node.source_ids) || !node.source_ids.length) throw new Error('Node ' + node.node_id + ' must select at least one supplied source ID');
+    if (!['POSITIVE', 'NEGATIVE', 'OFF_TOPIC', 'NEUTRAL'].includes(node.topic_position)) throw new Error('Invalid topic_position');
     return {
+      topic_position: node.topic_position,
       node_id: node.node_id, normalized_statement: node.normalized_statement, primary_type: node.primary_type,
       sources: [...new Set(node.source_ids)].map(id => {
         if (!bySource.has(id)) throw new Error('Unknown source ID ' + id);
@@ -76,7 +79,7 @@ function extractiveGraph(sources, reason) {
   return {
     nodes: sources.map((source, index) => ({
       node_id: 'N' + (index + 1), normalized_statement: source.original_quote,
-      primary_type: 'UNCLASSIFIED', sources: [toSource(source)]
+      primary_type: 'UNCLASSIFIED', topic_position: null, sources: [toSource(source)]
     })), edges: [],
     generation: { mode: sources.length ? 'extractive_fallback' : 'empty', warning: reason }
   };
