@@ -1,6 +1,6 @@
 # ClassDiscuss
 
-Real-time AI-powered classroom discussion summarization. Students record their group discussions; Whisper transcribes the audio; Claude summarizes it into live bullet points visible to both students and instructors.
+Classroom discussion transcription and analysis. Whisper transcribes complete audio segments while students keep recording. Students explicitly select Generate AI Summary to summarize their saved original transcripts with OpenAI. Instructors can generate an Argument Map from every group's original transcript.
 
 ---
 
@@ -13,7 +13,7 @@ Browser (Next.js 14)
                               ├─ PostgreSQL  (rooms, groups)
                               └─ Redis       (transcripts, summaries)
                               └─ OpenAI Whisper  (audio → text)
-                              └─ Anthropic Claude (text → bullets)
+                              └─ OpenAI GPT (manual summaries and argument maps)
 ```
 
 ---
@@ -140,9 +140,17 @@ The optional teacher-facing Argument Map feature reads original group transcript
 3. Click **+ Create Group**, enter group name and member names → **Start Session**
 4. Allow microphone access when prompted
 5. Click **Start Recording** — audio is sent in 10-second chunks to Whisper
-6. Watch the left panel update with live bullet-point summaries
+6. View original transcription in the lower left pane while recording; select **Generate AI Summary** in the top bar to update the upper pane.
 7. Click any bullet to edit/correct transcription errors (edits are preserved across AI updates)
-8. Click **View Summary** on any group in the sidebar to view their live summary
+8. Click **View Summary** on any group in the sidebar to view its summary and original transcript.
+
+### Session behavior
+
+- **Leave Room** saves the final audio segment before navigating away. Saved transcripts and summaries remain; the teacher sees a gray offline card when the last group connection leaves. Reopening the room in the same browser restores the group using local storage.
+- **Discussion Instruction** lets instructors edit the topic and instructions; saved changes are broadcast to students immediately.
+- There is no duration field, automatic group summarization, or timed room deletion. Data is removed only when an instructor explicitly ends the session.
+- Transcription updates approximately every four seconds plus upload/model latency. A browser microphone permission is required. Use Leave Room to save pending audio before navigating away.
+- Run `npm test`, `npx tsc --noEmit`, and `npm run build` before deployment. Tests use mock AI/database adapters and do not incur API charges.
 
 ---
 

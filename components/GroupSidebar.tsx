@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type Ref } from 'react';
 import { createGroup, type Group } from '@/lib/api';
-import MicRecorder from './MicRecorder';
+import MicRecorder, { type RecorderHandle } from './MicRecorder';
 
 interface Props {
   roomCode: string;
@@ -11,6 +11,8 @@ interface Props {
   activeGroupId: string | null;
   onGroupCreated: (group: Group) => void;
   onViewGroup: (id: string) => void;
+  recorderRef: Ref<RecorderHandle>;
+  busy: boolean;
 }
 
 export default function GroupSidebar({
@@ -20,6 +22,8 @@ export default function GroupSidebar({
   activeGroupId,
   onGroupCreated,
   onViewGroup,
+  recorderRef,
+  busy,
 }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -122,7 +126,7 @@ export default function GroupSidebar({
           <p className="text-xs font-semibold text-emerald-600 mb-0.5">Your group</p>
           <p className="font-semibold text-gray-900 text-sm">{myGroup.name}</p>
           <p className="text-xs text-gray-500 truncate">{myGroup.members.join(', ')}</p>
-          <MicRecorder groupId={myGroup.id} />
+          <MicRecorder key={myGroup.id} ref={recorderRef} groupId={myGroup.id} disabled={busy} />
         </div>
       )}
 

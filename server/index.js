@@ -12,7 +12,6 @@ const roomRoutes = require('./routes/rooms');
 const groupRoutes = require('./routes/groups');
 const transcribeRoute = require('./routes/transcribe');
 const argumentMapRoute = require('./routes/argumentMap');
-const scheduler = require('./services/scheduler');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
 const pool = require('./db/pool');
@@ -126,7 +125,46 @@ io.on('connection', (socket) => {
     socket.to(roomCode).emit('broadcast:received', { groupId, groupName, summary });
   });
 
-  socket.on('disconnect', () => {});
+  // Socket-backed presence, with multiple tabs counted independently.
+  async function publishPresence(roomCode, groupId) {
+    const sockets = await io.in(roomCode).fetchSockets();
+    io.to(roomCode).emit('group:presence', {
+      groupId, online: sockets.some(s => s.data.groupId === groupId)
+    });
+  }
+  let presenceQueue = Promise.resolve();
+  socket.on('group:join', ({ roomCode, groupId } = {}, ack) => {
+    presenceQueue = presenceQueue.then(async () => {
+      if (!/^\d{6}$/.test(roomCode || '') || !/^[a-f0-9-]{36}$/i.test(groupId || '')) {
+        return ack?.({ error: 'Invalid room or group' });
+      }
+      const { rows } = await pool.query(
+        'SELECT g.id FROM groups g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1 AND r.code = $2',
+        [groupId, roomCode]
+      );
+      if (!rows.length) return ack?.({ error: 'Group not found' });
+      if (!socket.connected) return;
+      const previous = { ...socket.data };
+      socket.data = { groupId, roomCode };
+      await socket.join(roomCode);
+      if (previous.groupId) await publishPresence(previous.roomCode, previous.groupId);
+      await publishPresence(roomCode, groupId);
+      ack?.({ ok: true });
+    }).catch(error => { console.error('Group presence:', error.message); ack?.({ error: 'Unable to join group' }); });
+  });
+  socket.on('group:leave', (ack) => {
+    presenceQueue = presenceQueue.then(async () => {
+      const { groupId, roomCode } = socket.data;
+      socket.data = {};
+      if (roomCode) await socket.leave(roomCode);
+      if (groupId) await publishPresence(roomCode, groupId);
+      ack?.({ ok: true });
+    }).catch(error => { console.error('Leave group:', error.message); ack?.({ error: 'Unable to leave' }); });
+  });
+  socket.on('disconnect', () => {
+    const { groupId, roomCode } = socket.data;
+    if (groupId) void publishPresence(roomCode, groupId).catch(error => console.error('Presence:', error.message));
+  });
 });
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -143,8 +181,8 @@ async function applySchema() {
 async function start() {
   await applySchema();               // create tables if they don't exist yet
   await redis.getClient();           // ensure Redis is connected
-  scheduler.setIO(io);
-  scheduler.startScheduler();
+  // No automatic summaries or room expiry. Students request summaries explicitly;
+  // data remains until an instructor deliberately ends the session.
 
   const PORT = process.env.PORT || 3001;
   server.listen(PORT, () => {
@@ -152,7 +190,11 @@ async function start() {
   });
 }
 
-start().catch((err) => {
-  console.error('Server startup failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch((err) => {
+    console.error('Server startup failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, server, io, start };

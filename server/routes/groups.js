@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const redis = require('../services/redis');
+const { summarizeTranscript } = require('../services/summarize');
 
 // POST /api/groups — create a group inside a room
 router.post('/', async (req, res) => {
@@ -61,14 +62,42 @@ router.get('/:roomCode', async (req, res) => {
       [roomCode]
     );
 
+    const sockets = await req.app.get('io').in(roomCode).fetchSockets();
     const groups = await Promise.all(
-      rows.map(async (g) => ({ ...g, summary: await redis.getSummary(g.id) }))
+      rows.map(async (g) => ({
+        ...g, id: String(g.id),
+        summary: await redis.getSummary(g.id),
+        transcript: await redis.getTranscript(g.id),
+        online: sockets.some(s => s.data.groupId === String(g.id))
+      }))
     );
 
     res.json({ groups });
   } catch (err) {
     console.error('GET /api/groups/:roomCode', err.message);
     res.status(500).json({ error: 'Failed to fetch groups' });
+  }
+});
+
+// Summaries are generated only on an explicit student request.
+router.post('/:groupId/summary', async (req, res) => {
+  const { groupId } = req.params;
+  if (!/^[a-f0-9-]{36}$/i.test(groupId)) return res.status(400).json({ error: 'Invalid group ID' });
+  try {
+    const { rows } = await pool.query(
+      'SELECT g.id, r.code FROM groups g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1', [groupId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Group not found' });
+    const transcript = await redis.getTranscript(groupId);
+    if (!transcript.trim()) return res.status(422).json({ error: 'Record some discussion before generating a summary.' });
+    const summary = await summarizeTranscript(transcript);
+    if (!summary) return res.status(422).json({ error: 'Record a little more discussion before generating a summary.' });
+    await redis.setSummary(groupId, summary);
+    req.app.get('io').to(rows[0].code).emit('group:summary:update', { groupId, summary });
+    res.json({ summary });
+  } catch (error) {
+    console.error('POST group summary:', error.message);
+    res.status(500).json({ error: 'Unable to generate summary. Please try again.' });
   }
 });
 

@@ -12,10 +12,8 @@ router.post('/', requireInstructor, async (req, res) => {
   const instructorName = typeof req.body?.instructor_name === 'string' ? req.body.instructor_name.trim() : '';
   const teacherTopic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
   const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
-  const duration = req.body?.duration_minutes;
-  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000
-    || !Number.isInteger(duration) || duration < 1 || duration > 180) {
-    return res.status(400).json({ error: 'Instructor name, topic and duration (1-180 min) are required; instructions are optional' });
+  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000) {
+    return res.status(400).json({ error: 'Instructor name and topic are required; instructions are optional' });
   }
   try {
     let code;
@@ -29,7 +27,7 @@ router.post('/', requireInstructor, async (req, res) => {
 
     const { rows } = await pool.query(
       'INSERT INTO rooms (code, teacher_topic, discussion_instructions, duration_minutes, instructor_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at',
-      [code, teacherTopic, instructions, duration, instructorName]
+      [code, teacherTopic, instructions, null, instructorName]
     );
     res.status(201).json({ room: rows[0] });
   } catch (err) {
@@ -56,8 +54,28 @@ router.get('/:code', async (req, res) => {
   }
 });
 
-// DELETE /api/rooms/:code — end a session (deletes room + groups, clears Redis)
-router.delete('/:code', async (req, res) => {
+router.patch('/:code', requireInstructor, async (req, res) => {
+  const topic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
+  const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
+  if (!/^\d{6}$/.test(req.params.code) || !topic || topic.length > 1500 || instructions.length > 5000) {
+    return res.status(400).json({ error: 'A topic (up to 1500 characters) and optional instructions (up to 5000 characters) are required.' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'UPDATE rooms SET teacher_topic = $1, discussion_instructions = $2 WHERE code = $3 RETURNING *',
+      [topic, instructions, req.params.code]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Room not found' });
+    req.app.get('io').to(req.params.code).emit('room:updated', { room: rows[0] });
+    res.json({ room: rows[0] });
+  } catch (error) {
+    console.error('PATCH room:', error.message);
+    res.status(500).json({ error: 'Unable to update discussion instructions.' });
+  }
+});
+
+// Only an instructor can permanently end a session.
+router.delete('/:code', requireInstructor, async (req, res) => {
   const { code } = req.params;
   if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
 
@@ -79,6 +97,7 @@ router.delete('/:code', async (req, res) => {
       await redis.del(`group:${g.id}:summary`);
       await redis.del(`group:${g.id}:lastUpdated`);
       await redis.del(`group:${g.id}:lastSummaryTime`);
+      await redis.del(`group:${g.id}:audioChunks`);
     }
 
     await redis.del(`room:${code}:argumentMap`);

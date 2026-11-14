@@ -154,8 +154,6 @@ export default function SessionReportPage() {
               <dd className="whitespace-pre-wrap">{report.room.teacher_topic || 'Not provided'}</dd>
               <dt className="font-semibold text-slate-600">Questions / Instructions</dt>
               <dd className="whitespace-pre-wrap">{report.room.discussion_instructions || 'Not provided'}</dd>
-              <dt className="font-semibold text-slate-600">Planned Duration</dt>
-              <dd>{report.room.duration_minutes ? report.room.duration_minutes + ' minutes' : 'Not recorded'}</dd>
               <dt className="font-semibold text-slate-600">Groups</dt>
               <dd>{report.groups.length ? report.groups.map((group) => group.name).join(', ') : 'No groups recorded'}</dd>
             </dl>

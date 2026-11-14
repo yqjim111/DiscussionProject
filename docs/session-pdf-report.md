@@ -5,7 +5,7 @@ This feature is developed on `feature/session-pdf-report`, separate from the ori
 ## What the report includes
 
 - Session date and room code.
-- Instructor name, teacher topic, discussion instructions/questions, and planned duration.
+- Instructor name, teacher topic, and discussion instructions/questions.
 - Names of all participating groups.
 - The latest generated Overall Class Summary.
 - The latest validated Argument Map: a printable diagram image, extracted arguments with their source quotes, and edge relationships with justifications.
@@ -15,7 +15,7 @@ The report does not generate new AI output. When either analysis has not been ru
 ## Usage
 
 1. Start the app and its PostgreSQL/Redis dependencies. Sign in through the instructor portal.
-2. Create a **new** room with instructor name, topic, optional questions/instructions and planned duration.
+2. Create a room with instructor name, topic, and optional questions/instructions. There is no time limit.
 3. After students have completed their discussions, run **Generate Overall Summary** and **Generate Argument Map**.
 4. Return to the Instructor Dashboard and click **Export PDF**.
 5. The Session Report page displays the stored results. Click **Export PDF / Print**, then choose **Save as PDF** as the printer destination in your browser.

@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { getRoom, type Room } from '@/lib/api';
+import { getRoom, getGroups, type Room, type Group } from '@/lib/api';
+import { getSocket } from '@/lib/socket';
+import DiscussionInstructions from '@/components/DiscussionInstructions';
 import Script from 'next/script';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string };
 type Node = { node_id: string; normalized_statement: string; primary_type: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
-type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[] };
+type Graph = { nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
 declare global { interface Window { cytoscape?: (config: any) => any } }
 
 const API_BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
@@ -35,13 +37,23 @@ export default function ArgumentMapPage() {
   const [details, setDetails] = useState<null | { title: string; paragraphs: string[]; quotes: { meta: string; quote: string }[] }>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [inputGroups, setInputGroups] = useState<Group[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    getRoom(roomCode)
-      .then(({ room }) => { if (!cancelled) setRoom(room); })
-      .catch(() => { if (!cancelled) setRoomError('Unable to load session information.'); });
-    return () => { cancelled = true; };
+    const refresh = () => Promise.all([getRoom(roomCode), getGroups(roomCode)])
+      .then(([{ room }, { groups }]) => { if (!cancelled) { setRoom(room); setInputGroups(groups); setRoomError(''); } })
+      .catch(() => { if (!cancelled) setRoomError('Unable to load session information and original transcripts.'); });
+    void refresh();
+    const socket = getSocket();
+    const join = () => socket.emit('join:room', roomCode);
+    const updated = ({ room }: { room: Room }) => { if (!cancelled) setRoom(room); };
+    const transcript = ({ groupId, transcript }: { groupId: string; transcript: string }) => {
+      setInputGroups(prev => prev.map(g => g.id === groupId ? { ...g, transcript } : g));
+    };
+    join(); socket.on('connect', join); socket.on('room:updated', updated); socket.on('group:transcript:update', transcript);
+    const interval = setInterval(refresh, 10000);
+    return () => { cancelled = true; clearInterval(interval); socket.off('connect', join); socket.off('room:updated', updated); socket.off('group:transcript:update', transcript); };
   }, [roomCode]);
 
   useEffect(() => {
@@ -155,9 +167,18 @@ export default function ArgumentMapPage() {
           <div className="text-sm space-y-3">
             <div><strong>Teacher Topic</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.teacher_topic || 'No topic saved for this room'}</p></div>
             <div><strong>Discussion Instructions</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.discussion_instructions || 'None provided'}</p></div>
-            <div><strong>Planned Duration</strong><p className="mt-1 text-slate-600">{room?.duration_minutes ? room.duration_minutes + ' minutes' : 'Not recorded'}</p></div>
           </div>
           <p className="text-xs text-slate-500">The analysis uses saved session information and original group transcripts. No additional fields are required.</p>
+          <DiscussionInstructions roomCode={roomCode} editable />
+          <details className="text-sm border rounded-lg p-3">
+            <summary className="cursor-pointer font-semibold">Input: All Groups’ Original Transcripts ({inputGroups.length} groups)</summary>
+            <p className="text-xs text-slate-500 my-3">Includes offline groups. AI summaries are never used as input. Generation uses all text saved when the request begins; newer speech is included on the next generation.</p>
+            {inputGroups.map(group => <div key={group.id} className="border-t py-3">
+              <h3 className="font-semibold">{group.name} · {group.transcript?.length || 0} characters</h3>
+              <p className="whitespace-pre-wrap break-words max-h-64 overflow-y-auto mt-2 text-slate-600">{group.transcript || 'No recorded transcript yet.'}</p>
+            </div>)}
+          </details>
+          {graph?.input && <p className="text-xs text-slate-500">Last map input: {graph.input.groups.filter(g => g.characters > 0).length} groups with transcripts · {graph.input.groups.reduce((sum, g) => sum + g.characters, 0)} characters · {new Date(graph.input.generated_at).toLocaleTimeString()}</p>}
           <button type="button" disabled={loading || !room?.teacher_topic} onClick={generate} className="w-full rounded-lg bg-indigo-600 text-white font-semibold px-4 py-3 disabled:opacity-50">
             {loading ? 'Analyzing discussion…' : 'Generate Argument Map'}
           </button>

@@ -70,6 +70,15 @@ const schema = {
   }
 };
 
+function originalQuote(text, quote) {
+  if (typeof quote !== 'string' || !quote.trim()) return null;
+  if (text.includes(quote)) return quote;
+  // Only whitespace differences can be repaired mechanically. Never paraphrase,
+  // change punctuation, or accept approximate semantic matches as evidence.
+  const escaped = quote.trim().split(/\s+/u).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return text.match(new RegExp(escaped.join('\\s+'), 'u'))?.[0] || null;
+}
+
 function validateGraph(graph, transcript, allowedGroups) {
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
     throw new Error('AI returned invalid graph structure');
@@ -81,11 +90,17 @@ function validateGraph(graph, transcript, allowedGroups) {
       throw new Error('Invalid, duplicate, or ungrounded node');
     }
     for (const source of node.sources) {
-      if (!source.original_quote?.trim() || !transcript.includes(source.original_quote)) {
-        throw new Error('Node quotation not found in original transcript');
-      }
-      if (source.group_id != null && !allowedGroups.has(source.group_id)) {
-        throw new Error('Unrecognized source group');
+      // Quotes must belong to the cited group's raw text, not to a summary,
+      // group header, or a different group's transcript.
+      const groupText = allowedGroups.get(source.group_id);
+      const quote = typeof groupText === 'string' ? originalQuote(groupText, source.original_quote) : null;
+      if (!quote) throw new Error('Node ' + node.node_id + ': quotation not found in the cited group transcript; copy an exact original quote and its Group ID.');
+      const previousQuote = source.original_quote;
+      source.original_quote = quote;
+      for (const edge of graph.edges) {
+        for (const item of edge.evidence || []) {
+          if (item.node_id === node.node_id && item.original_quote === previousQuote) item.original_quote = quote;
+        }
       }
       // Group-level raw transcription has no reliable speaker, time or position.
       if (source.speaker_id !== null || source.timestamp !== null || source.source_location !== null) {
@@ -122,37 +137,52 @@ async function analyzeArgumentMap({ topic, instructions, groups }) {
   const transcript = groups
     .map(g => 'Group ID: ' + g.id + '\nGroup name: ' + g.name + '\nTranscript:\n' + g.transcript)
     .join('\n\n-----\n\n');
-  const allowedGroups = new Set(groups.map(g => g.id));
+  const allowedGroups = new Map(groups.map(g => [g.id, g.transcript]));
   const approvedPrompt = fs.readFileSync(PROMPT_PATH, 'utf8');
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await client.chat.completions.create({
-    model: process.env.ARGUMENT_MAP_MODEL || 'gpt-4o-mini',
-    temperature: 0,
-    max_tokens: 12000,
-    response_format: {
-      type: 'json_schema',
-      json_schema: { name: 'classroom_argument_map', strict: true, schema }
-    },
-    messages: [
-      { role: 'system', content: approvedPrompt +
-        '\n\nExecution context: Return ONLY the Part A strict JSON for server-side rendering, ' +
-        'not HTML or an explanation. Group IDs are exactly the Group ID values given below. ' +
-        'The supplied raw transcripts have no verified speaker IDs, timestamps or source locations: ' +
-        'set those three fields to null, never infer them. Original quotes must be exact substrings ' +
-        'of the supplied transcript. Follow both edge-identification and edge-verification stages.' },
-      { role: 'user', content: JSON.stringify({
-        teacher_topic: topic,
-        discussion_instructions: instructions || '',
-        discussion_transcript: transcript,
-        discussion_metadata: groups.map(g => ({ group_id: g.id, group_name: g.name, speaker_id: null, timestamp: null }))
-      }) }
-    ]
-  });
-  const msg = response.choices[0]?.message;
-  if (!msg?.content || msg.refusal || response.choices[0]?.finish_reason !== 'stop') {
-    throw new Error('Model did not produce a complete graph');
+  const messages = [
+    { role: 'system', content: approvedPrompt +
+      '\n\nExecution context: Return ONLY the Part A strict JSON. Use ALL supplied groups and their ORIGINAL transcripts, never summaries. ' +
+      'Group IDs must exactly match a supplied Group ID. speaker_id, timestamp and source_location must be null. ' +
+      'Copy original_quote verbatim from the cited group transcript, preserving language, punctuation and spelling. ' +
+      'Perform both edge identification and verification. Return no invented sources.' },
+    { role: 'user', content: JSON.stringify({
+      teacher_topic: topic,
+      discussion_instructions: instructions || '',
+      discussion_transcript: transcript,
+      discussion_metadata: groups.map(g => ({ group_id: g.id, group_name: g.name, speaker_id: null, timestamp: null }))
+    }) }
+  ];
+  // Retry a rejected graph with precise validation feedback, never by loosening
+  // provenance rules or silently dropping invalid nodes / groups.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await client.chat.completions.create({
+      model: process.env.ARGUMENT_MAP_MODEL || 'gpt-4o-mini',
+      temperature: 0,
+      max_tokens: 12000,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'classroom_argument_map', strict: true, schema }
+      },
+      messages
+    });
+    const msg = response.choices[0]?.message;
+    try {
+      if (!msg?.content || msg.refusal || response.choices[0]?.finish_reason !== 'stop') {
+        throw new Error('Model did not produce a complete graph. Return a complete, concise graph within the output limit.');
+      }
+      return validateGraph(JSON.parse(msg.content), transcript, allowedGroups);
+    } catch (error) {
+      console.warn('Argument map validation attempt ' + (attempt + 1) + ': ' + error.message);
+      if (attempt === 2) {
+        const failure = new Error('The AI could not produce a graph with verified original quotations after three attempts. Your transcripts are saved; please try again.');
+        failure.code = 'GRAPH_VALIDATION';
+        throw failure;
+      }
+      if (msg?.content) messages.push({ role: 'assistant', content: msg.content });
+      messages.push({ role: 'user', content: 'Validation rejected that graph: ' + error.message + '\nRebuild the complete graph from ALL original group transcripts. Fix this issue and verify every quotation and relationship again. Do not paraphrase original_quote or omit a group to avoid validation.' });
+    }
   }
-  return validateGraph(JSON.parse(msg.content), transcript, allowedGroups);
 }
 
-module.exports = { analyzeArgumentMap, validateGraph };
+module.exports = { analyzeArgumentMap, validateGraph, originalQuote };

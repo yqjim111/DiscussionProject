@@ -95,7 +95,7 @@ export default function EditableSummary({ group, isEditable }: Props) {
       <div className="space-y-2">
         {bullets.length === 0 && (
           <p className="text-gray-300 italic text-sm">
-            Your group&apos;s summary will appear here as the discussion is transcribed…
+            Select Generate AI Summary to summarize the saved discussion.
           </p>
         )}
 

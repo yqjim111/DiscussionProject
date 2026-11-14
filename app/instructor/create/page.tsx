@@ -17,7 +17,6 @@ export default function InstructorCreate() {
   const [topic, setTopic] = useState('');
   const [instructorName, setInstructorName] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [durationMinutes, setDurationMinutes] = useState(15);
   const [authLoading, setAuthLoading] = useState(false);
 
   async function handlePinSubmit() {
@@ -37,9 +36,8 @@ export default function InstructorCreate() {
   }
 
   async function handleCreate() {
-    if (!topic.trim() || !instructorName.trim() || topic.length > 1500 || instructions.length > 5000 ||
-      !Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 180) {
-      setError('Enter your instructor name, a topic and a valid duration between 1 and 180 minutes.');
+    if (!topic.trim() || !instructorName.trim() || topic.length > 1500 || instructions.length > 5000) {
+      setError('Enter your instructor name and a topic.');
       return;
     }
     setLoading(true);
@@ -49,7 +47,6 @@ export default function InstructorCreate() {
         teacher_topic: topic.trim(),
         instructor_name: instructorName.trim(),
         discussion_instructions: instructions.trim(),
-        duration_minutes: durationMinutes,
       });
       setRoomCode(room.code);
       setTimeout(() => router.push(`/instructor/${room.code}`), 3000);
@@ -141,17 +138,6 @@ export default function InstructorCreate() {
                 placeholder="Questions, subtopics, or ordered discussion tasks"
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
-              />
-            </label>
-            <label className="block text-sm font-semibold text-gray-700">
-              Duration (minutes) *
-              <input
-                type="number"
-                min={1}
-                max={180}
-                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
-                value={durationMinutes}
-                onChange={(e) => setDurationMinutes(Number(e.target.value))}
               />
             </label>
             <button

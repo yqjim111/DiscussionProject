@@ -1,7 +1,7 @@
 const BASE = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, credentials: 'include' });
+  const res = await fetch(`${BASE}${path}`, { ...init, credentials: 'include', cache: 'no-store' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
@@ -24,6 +24,8 @@ export interface Group {
   name: string;
   members: string[];
   summary: string;
+  transcript?: string;
+  online?: boolean;
   created_at?: string;
 }
 
@@ -39,7 +41,6 @@ export function createRoom(data: {
   teacher_topic: string;
   instructor_name: string;
   discussion_instructions: string;
-  duration_minutes: number;
 }): Promise<{ room: Room }> {
   return request('/api/rooms', {
     method: 'POST',
@@ -50,6 +51,16 @@ export function createRoom(data: {
 
 export function getRoom(code: string): Promise<{ room: Room }> {
   return request(`/api/rooms/${code}`);
+}
+
+export function updateRoom(code: string, data: { teacher_topic: string; discussion_instructions: string }): Promise<{ room: Room }> {
+  return request(`/api/rooms/${code}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  });
+}
+
+export function generateGroupSummary(groupId: string): Promise<{ summary: string }> {
+  return request(`/api/groups/${groupId}/summary`, { method: 'POST' });
 }
 
 export function createGroup(data: {

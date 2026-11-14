@@ -16,10 +16,11 @@ export default function GroupCard({ group, onBroadcast }: Props) {
   const bullets = group.summary ? parseBullets(group.summary) : [];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col gap-4">
+    <div className={`rounded-xl border shadow-sm p-5 flex flex-col gap-4 ${group.online ? 'bg-white border-gray-100' : 'bg-gray-100 border-gray-300'}`}>
       {/* Header */}
       <div>
         <h3 className="text-lg font-bold text-gray-900 leading-tight">{group.name}</h3>
+        <p className={`text-xs font-semibold mt-1 ${group.online ? 'text-emerald-700' : 'text-gray-500'}`}>{group.online ? 'Online' : 'Offline · saved discussion retained'}</p>
         <p className="text-sm text-gray-400 mt-0.5 truncate">{group.members.join(', ')}</p>
       </div>
 
@@ -36,10 +37,15 @@ export default function GroupCard({ group, onBroadcast }: Props) {
           </ul>
         ) : (
           <p className="text-sm text-gray-300 italic">
-            Waiting for discussion to begin…
+            Waiting for students to select Generate AI Summary…
           </p>
         )}
       </div>
+
+      <details className="text-sm">
+        <summary className="cursor-pointer font-semibold text-gray-700">View Original Transcription</summary>
+        <p className="whitespace-pre-wrap break-words mt-3 max-h-72 overflow-y-auto leading-6 text-gray-700">{group.transcript || 'No transcription yet.'}</p>
+      </details>
 
       {/* Broadcast button */}
       <button

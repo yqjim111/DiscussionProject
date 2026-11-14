@@ -12,12 +12,20 @@ async function getClient() {
   return client;
 }
 
-async function appendTranscript(groupId, text) {
+async function appendTranscript(groupId, text, chunkId) {
   const redis = await getClient();
   const key = `group:${groupId}:transcript`;
-  const existing = (await redis.get(key)) || '';
-  const updated = existing ? `${existing}\n${text}` : text;
-  await redis.set(key, updated);
+  // Retry-safe atomic append: a lost HTTP response must not duplicate speech.
+  if (chunkId) {
+    await redis.eval(`
+      if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return 0 end
+      redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+      redis.call('APPEND', KEYS[1], ARGV[2] .. '\\n')
+      return 1
+    `, { keys: [key, 'group:' + groupId + ':audioChunks'], arguments: [chunkId, text] });
+  } else {
+    await redis.append(key, text + '\n');
+  }
   await redis.set(`group:${groupId}:lastUpdated`, Date.now().toString());
 }
 

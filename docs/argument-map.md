@@ -51,13 +51,13 @@ Start the existing backend and frontend, then open the instructor room dashboard
 
 ## Input limitations
 
-- A teacher topic and planned duration (1–180 minutes) are required at **room creation**; discussion instructions are optional. The graph generation page displays these saved values and does not ask for them again.
+- A teacher topic and instructor name are required at **room creation**; instructions are optional. Topic and instructions can be changed through Discussion Instruction during the session. There is no duration or timed expiry.
 - Group IDs and group names are taken from existing room records.
 - Current group-level audio transcripts do not include verified speaker IDs, timestamps, or source offsets. The service requires these missing fields to be `null`.
-- Maximum total raw transcript size in this initial integration is 30,000 characters. Larger inputs require context-preserving chunking and global deduplication; do not truncate them.
-- The service only analyzes groups that have recorded transcript text.
-- Sessions created before the schema update may have no saved topic; create a new session for the automatic-input workflow.
-- The graph is generated on demand and is **not currently persisted** in the database.
+- Maximum combined raw transcript input is 180,000 characters. Larger inputs are explicitly rejected, never truncated or analyzed partially.
+- The service includes every group with recorded original transcript text, including offline groups. It never uses AI summaries as input. The input panel exposes each group's text and character count; saved graph metadata records the input group counts.
+- Older sessions without a topic can be updated through Discussion Instruction.
+- Generated graphs and input metadata are saved in Redis until the instructor ends the session.
 
 ## Visualization
 
@@ -70,7 +70,7 @@ Start the existing backend and frontend, then open the instructor room dashboard
 
 ## Verification and current limitations
 
-The model prompt describes Stage One (candidate relationship identification) and Stage Two (candidate relationship verification). This initial service performs those stages within **one model request**, followed by server-side structural/source checks. These checks are **not** an independent second AI semantic-verification call. An additional model review pass may be required if independent verification is needed.
+The prompt describes candidate relationship identification and verification within one model request, followed by server-side structural/source checks. A rejected graph is retried with validation feedback (up to three total model requests). Quotes must match the cited group's original text. Only whitespace differences are repaired mechanically, restoring the exact original text; paraphrases are rejected. These checks are not an independent AI semantic-verification call.
 
 The server can verify quotation presence and selected structural constraints but cannot guarantee that every extracted proposition or inferred relationship is semantically correct. Before wider use, evaluate extraction accuracy with representative, authorized sample transcripts.
 

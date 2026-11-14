@@ -1,155 +1,134 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { forwardRef, useState, useRef, useEffect, useImperativeHandle } from 'react';
 import { transcribeAudio } from '@/lib/api';
 
-interface Props {
-  groupId: string;
-  onTranscript?: (text: string) => void;
-}
+export interface RecorderHandle { flush: (stop?: boolean) => Promise<void> }
+const CHUNK_MS = 4000;
 
-const CHUNK_DURATION_MS = 10_000;
-
-export default function MicRecorder({ groupId, onTranscript }: Props) {
+const MicRecorder = forwardRef<RecorderHandle, { groupId: string; disabled?: boolean }>(function MicRecorder({ groupId, disabled }, ref) {
   const [recording, setRecording] = useState(false);
+  const [pending, setPending] = useState(0);
   const [error, setError] = useState('');
-  const [chunkCount, setChunkCount] = useState(0);
+  const [starting, setStarting] = useState(false);
+  const stream = useRef<MediaStream | null>(null);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const active = useRef(false);
+  const mounted = useRef(true);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const failed = useRef<{ blob: Blob; id: string }[]>([]);
+  const stopped = useRef<Promise<void>>(Promise.resolve());
 
-  const streamRef = useRef<MediaStream | null>(null);
-  const isRecordingRef = useRef(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  async function retryUploads() {
+    while (failed.current.length) {
+      const item = failed.current[0];
+      const form = new FormData();
+      form.append('audio', item.blob, item.blob.type.includes('mp4') ? 'chunk.mp4' : 'chunk.webm');
+      form.append('groupId', groupId);
+      form.append('chunkId', item.id);
+      await transcribeAudio(form);
+      failed.current.shift();
+    }
+  }
 
-  const sendChunk = useCallback(
-    async (blob: Blob) => {
-      if (blob.size < 1000) return;
-      try {
-        const fd = new FormData();
-        fd.append('audio', blob, 'chunk.webm');
-        fd.append('groupId', groupId);
-        const { transcript } = await transcribeAudio(fd);
-        if (transcript && onTranscript) onTranscript(transcript);
-        setChunkCount((c) => c + 1);
-      } catch (err) {
-        console.error('Chunk transcription error:', err);
-      }
-    },
-    [groupId, onTranscript]
-  );
+  function upload(blob: Blob) {
+    if (!blob.size) return;
+    if (mounted.current) setPending(n => n + 1);
+    queue.current = queue.current.then(async () => {
+      failed.current.push({ blob, id: crypto.randomUUID() });
+      await retryUploads();
+      if (mounted.current) setError('');
+    }).catch(() => {
+      if (mounted.current) setError('Some audio has not been saved. Keep this page open; Stop Recording or Leave Room will retry.');
+    }).finally(() => { if (mounted.current) setPending(n => n - 1); });
+  }
 
-  // Records one 10-second chunk, sends it, then restarts if still recording
-  const recordChunk = useCallback(() => {
-    if (!streamRef.current || !isRecordingRef.current) return;
-
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
-    const recorder = new MediaRecorder(streamRef.current, { mimeType });
-    const chunks: Blob[] = [];
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
+  // A fresh recorder creates a complete decodable file for every segment.
+  function recordChunk() {
+    if (!active.current || !stream.current) return;
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
+    const current = new MediaRecorder(stream.current, mimeType ? { mimeType } : undefined);
+    const pieces: Blob[] = [];
+    let resolveStop!: () => void;
+    stopped.current = new Promise<void>(resolve => { resolveStop = resolve; });
+    current.ondataavailable = event => { if (event.data.size) pieces.push(event.data); };
+    current.onstop = () => {
+      upload(new Blob(pieces, { type: current.mimeType }));
+      resolveStop();
+      if (active.current) recordChunk();
     };
-
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: mimeType });
-      void sendChunk(blob);
-      // Chain the next chunk
-      if (isRecordingRef.current) {
-        chunkTimerRef.current = setTimeout(recordChunk, 0);
-      }
+    current.onerror = () => {
+      active.current = false;
+      stream.current?.getTracks().forEach(track => track.stop());
+      if (mounted.current) { setRecording(false); setError('Recording stopped unexpectedly. Please start recording again.'); }
+      resolveStop();
     };
+    recorder.current = current;
+    current.start();
+    timer.current = setTimeout(() => { if (current.state === 'recording') current.stop(); }, CHUNK_MS);
+  }
 
-    mediaRecorderRef.current = recorder;
-    recorder.start();
+  async function flush(stop = false) {
+    if (stop) { active.current = false; setRecording(false); }
+    if (timer.current) clearTimeout(timer.current);
+    const finalChunk = stopped.current;
+    if (recorder.current?.state === 'recording') recorder.current.stop();
+    await finalChunk;
+    if (stop) { stream.current?.getTracks().forEach(track => track.stop()); stream.current = null; }
+    await queue.current;
+    // Retry in the same ordered queue to avoid concurrent duplicate uploads.
+    queue.current = queue.current.then(retryUploads);
+    const result = queue.current;
+    queue.current = result.catch(() => {});
+    await result;
+    if (mounted.current) setError('');
+  }
 
-    // Stop this recorder after CHUNK_DURATION_MS to trigger onstop
-    chunkTimerRef.current = setTimeout(() => {
-      if (recorder.state === 'recording') recorder.stop();
-    }, CHUNK_DURATION_MS);
-  }, [sendChunk]);
+  useImperativeHandle(ref, () => ({ flush }));
 
-  async function startRecording() {
-    setError('');
+  async function start() {
+    setStarting(true); setError('');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      isRecordingRef.current = true;
-      setRecording(true);
-      setChunkCount(0);
-      recordChunk();
-    } catch (err: unknown) {
-      const name = err instanceof Error ? err.name : '';
-      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-        setError('Microphone access is required to record your discussion');
-      } else {
-        setError('Could not start recording: ' + (err instanceof Error ? err.message : String(err)));
-      }
-    }
+      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mounted.current) { stream.current.getTracks().forEach(track => track.stop()); return; }
+      active.current = true; setRecording(true); recordChunk();
+    } catch (err) {
+      active.current = false; setRecording(false);
+      stream.current?.getTracks().forEach(track => track.stop());
+      setError(err instanceof Error ? err.message : 'Unable to start the microphone.');
+    } finally { if (mounted.current) setStarting(false); }
   }
 
-  function stopRecording() {
-    isRecordingRef.current = false;
-    if (chunkTimerRef.current) {
-      clearTimeout(chunkTimerRef.current);
-      chunkTimerRef.current = null;
-    }
-    if (mediaRecorderRef.current?.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    setRecording(false);
-  }
-
-  // Cleanup on unmount
   useEffect(() => {
+    mounted.current = true;
     return () => {
-      isRecordingRef.current = false;
-      if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current);
-      if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      mounted.current = false; active.current = false;
+      if (timer.current) clearTimeout(timer.current);
+      if (recorder.current?.state === 'recording') recorder.current.stop();
+      stream.current?.getTracks().forEach(track => track.stop());
     };
   }, []);
 
-  return (
-    <div className="mt-3 space-y-2">
-      {error && (
-        <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {error}
-        </div>
-      )}
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (active.current || pending > 0 || failed.current.length) {
+        event.preventDefault(); event.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pending, recording, error]);
 
-      <button
-        onClick={recording ? stopRecording : startRecording}
-        className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
-          recording
-            ? 'bg-red-100 text-red-700 hover:bg-red-200'
-            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-        }`}
-      >
-        {recording ? (
-          <>
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            Stop Recording
-          </>
-        ) : (
-          <>
-            <span>🎙</span>
-            Start Recording
-          </>
-        )}
-      </button>
+  return <div className="mt-3 space-y-2">
+    <button disabled={starting || disabled} onClick={() => recording ? void flush(true).catch(() => setError('Audio could not be saved. Keep this page open and try again.')) : void start()}
+      className={`w-full py-2.5 rounded-lg text-sm font-semibold ${recording ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+      {starting ? 'Opening microphone…' : recording ? 'Stop Recording' : 'Start Recording'}
+    </button>
+    <p className="text-xs text-gray-500">{recording ? 'Recording · transcript updates about every 4 seconds plus processing time.' : 'Microphone stopped.'}{pending > 0 && ` Saving ${pending} audio segment(s)…`}</p>
+    {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+    {error && !recording && <button disabled={disabled} onClick={() => void flush(true).catch(() => setError('Unable to save audio. Check your connection and retry.'))} className="text-xs font-semibold underline">Retry Saving Audio</button>}
+  </div>;
+});
 
-      {recording && (
-        <p className="text-xs text-gray-400 text-center">
-          Sending 10-second chunks to Whisper
-          {chunkCount > 0 && ` · ${chunkCount} transcribed`}
-        </p>
-      )}
-    </div>
-  );
-}
+export default MicRecorder;

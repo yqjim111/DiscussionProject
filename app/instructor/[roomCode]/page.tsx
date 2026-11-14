@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { getGroups, generateOverallSummary, deleteRoom, type Group } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 import GroupCard from '@/components/GroupCard';
+import DiscussionInstructions from '@/components/DiscussionInstructions';
 
 export default function InstructorDashboard() {
   const params = useParams();
@@ -34,7 +35,16 @@ export default function InstructorDashboard() {
     const poll = setInterval(loadGroups, 10_000);
 
     const socket = getSocket();
-    socket.emit('join:room', roomCode);
+    const join = () => socket.emit('join:room', roomCode);
+    join(); socket.on('connect', join);
+    const presence = ({ groupId, online }: { groupId: string; online: boolean }) => {
+      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, online } : g));
+    };
+    const transcript = ({ groupId, transcript }: { groupId: string; transcript: string }) => {
+      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, transcript } : g));
+    };
+    socket.on('group:presence', presence);
+    socket.on('group:transcript:update', transcript);
 
     socket.on('group:summary:update', ({ groupId, summary }: { groupId: string; summary: string }) => {
       setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, summary } : g)));
@@ -58,6 +68,9 @@ export default function InstructorDashboard() {
       clearInterval(poll);
       socket.off('group:summary:update');
       socket.off('group:created');
+      socket.off('connect', join);
+      socket.off('group:presence', presence);
+      socket.off('group:transcript:update', transcript);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [roomCode, loadGroups]);
@@ -116,7 +129,8 @@ export default function InstructorDashboard() {
               </span>
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <DiscussionInstructions roomCode={roomCode} editable />
             <Link
               href={`/instructor/${roomCode}/report`}
               className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm"
