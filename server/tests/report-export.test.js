@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { renderMapSvg, reportMarkdown, zipFiles } = require('../../lib/reportExport');
 
-test('Markdown preserves page section order, emphasis, multiline fields and thematic evidence/axis details', () => {
+test('Markdown preserves page section order, emphasis, multiline fields and concise theme/axis descriptions', () => {
   const source = { source_id: 'Q1', group_id: 'g1', group_name: 'One', source_kind: 'manual', original_quote: 'Keep authorship.' };
   const evidence = { code_ids: ['C1'], group_ids: ['g1'], sources: [source] };
   const thematic = { status: 'completed', codes: [{ code_id: 'C1', label: 'Retain authorship', meaning: 'Students remain authors', sources: [source] }],
@@ -23,10 +23,10 @@ test('Markdown preserves page section order, emphasis, multiline fields and them
   assert.match(markdown, /First task  \nSecond task/);
   assert.match(markdown, /\*\*Statement 1\.\*\*/);
   assert.match(markdown, /Assistance ↔ Replacement/);
-  assert.match(markdown, /\*\*Central concept:\*\* Agency/);
-  assert.match(markdown, /> Keep authorship\./);
-  assert.match(markdown, /Intermediate cases matter/);
-  assert.match(markdown, /Does context support the contrast/);
+  assert.match(markdown, /\*\*Meaningful authorship\*\*/);
+  assert.match(markdown, /A contextual pattern/);
+  assert.match(markdown, /Student authors Tool authors/);
+  assert.doesNotMatch(markdown, /Central concept|Supporting original evidence|Alternative interpretations|Questions for instructor review|AI-assisted draft/);
   assert.match(markdown, /First typed line  \n  Second typed line/);
   assert.doesNotMatch(markdown, /<script>/);
 });
