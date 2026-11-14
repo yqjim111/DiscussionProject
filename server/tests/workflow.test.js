@@ -65,6 +65,7 @@ mock('../services/summarize', {
 let aiInputs = [];
 let aiAttempts = 0;
 let transcribeCalls = 0;
+let failReport = false;
 function graphFor(quote, groupId = groups[0].id) {
   return { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', sources: [{
     group_id: groupId, speaker_id: null, timestamp: null, source_location: null, original_quote: quote,
@@ -74,6 +75,16 @@ class FakeOpenAI {
   constructor() {
     this.chat = { completions: { create: async input => {
       aiInputs.push(structuredClone(input));
+      if (input.response_format.json_schema.name === 'classroom_report') {
+        if (failReport) throw Object.assign(new Error('Test quota failure'), { status: 429 });
+        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+          overall_summary: 'High-level classroom synthesis.', reference_proposition: 'AI should be used in class.',
+          statements: [{ statement_id: 'S1', statement: 'A shared classroom statement.', position: 'OTHER', sources: [
+            { group_id: groups[0].id, original_quote: 'Original first group speech.' },
+            { group_id: groups[1].id, original_quote: 'Original second group speech.' }
+          ] }]
+        }) } }] };
+      }
       aiAttempts++;
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(
         graphFor(aiAttempts === 1 ? 'Invented quotation.' : 'Original first group speech.')
@@ -188,4 +199,47 @@ test('Argument Map reads all original group transcripts (including offline), nev
   assert.equal(graph.input.source, 'original_transcripts');
   assert.equal(graph.nodes[0].sources[0].original_quote, 'Original first group speech.');
   assert.ok(await client.get('room:' + room.code + ':argumentMap'));
+});
+
+test('full report includes merged cross-group statements, diagram, members and exact original transcripts in one stable snapshot', async () => {
+  groups.push({ id: crypto.randomUUID(), name: 'Empty group', members: ['C'], room_id: room.id });
+  const response = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.equal(report.overallSummary, 'High-level classroom synthesis.');
+  assert.equal(report.contentAnalysis.statements.length, 1);
+  assert.deepEqual(report.contentAnalysis.statements[0].sources.map(s => s.group_id), [groups[0].id, groups[1].id]);
+  assert.ok(report.argumentMap.nodes.length);
+  assert.equal(report.groups.length, 3);
+  assert.deepEqual(report.groups[0].members, ['A']);
+  assert.equal(report.groups[0].transcript, 'Original first group speech.');
+  assert.equal(report.groups[2].transcript, '');
+  const calls = aiInputs.length;
+  const saved = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(aiInputs.length, calls, 'Preview/export must not call AI');
+  assert.equal(saved.stale, false);
+  await redis.appendTranscript(groups[0].id, 'New speech after the snapshot.');
+  const later = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(later.stale, true);
+  assert.equal(later.groups[0].transcript, report.groups[0].transcript, 'Appendix must match analysis snapshot');
+  failReport = true;
+  const failed = await post('/api/rooms/' + room.code + '/report/generate', {}, true);
+  assert.equal(failed.status, 502);
+  assert.equal(JSON.parse(await client.get('room:' + room.code + ':reportSnapshot')).generatedAt, report.generatedAt);
+  assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {})).status, 401);
+});
+
+test('content analysis rejects fabricated provenance, duplicated statements and forced positions without a proposition', () => {
+  const { validateAnalysis } = require('../services/reportAnalysis');
+  const input = [{ id: groups[0].id, transcript: 'An original claim.' }];
+  const analysis = { overall_summary: 'Overview', reference_proposition: '', statements: [
+    { statement_id: 'S1', statement: 'A claim', position: 'OTHER', sources: [{ group_id: groups[0].id, original_quote: 'An original claim.' }] }
+  ] };
+  assert.doesNotThrow(() => validateAnalysis(structuredClone(analysis), input));
+  const fabricated = structuredClone(analysis); fabricated.statements[0].sources[0].original_quote = 'Invented claim';
+  assert.throws(() => validateAnalysis(fabricated, input), /cited group/);
+  const forced = structuredClone(analysis); forced.statements[0].position = 'FOR';
+  assert.throws(() => validateAnalysis(forced, input), /reference proposition/);
+  const duplicate = structuredClone(analysis); duplicate.statements.push({ ...duplicate.statements[0], statement_id: 'S2' });
+  assert.throws(() => validateAnalysis(duplicate, input), /Duplicate/);
 });

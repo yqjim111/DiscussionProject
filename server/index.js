@@ -12,6 +12,7 @@ const roomRoutes = require('./routes/rooms');
 const groupRoutes = require('./routes/groups');
 const transcribeRoute = require('./routes/transcribe');
 const argumentMapRoute = require('./routes/argumentMap');
+const reportRoutes = require('./routes/report');
 const redis = require('./services/redis');
 const { synthesizeAllSummaries } = require('./services/summarize');
 const pool = require('./db/pool');
@@ -51,6 +52,7 @@ app.use('/api/rooms', roomRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/transcribe', transcribeRoute);
 app.use('/api/rooms', argumentMapRoute);
+app.use('/api/rooms', reportRoutes);
 
 // POST /api/rooms/:code/summary — synthesize all group summaries for a room
 app.post('/api/rooms/:code/summary', requireInstructor, async (req, res) => {
@@ -75,38 +77,6 @@ app.post('/api/rooms/:code/summary', requireInstructor, async (req, res) => {
   } catch (err) {
     console.error('POST /api/rooms/:code/summary', err.message);
     res.status(500).json({ error: 'Failed to generate overall summary' });
-  }
-});
-
-// GET /api/rooms/:code/report — read previously generated results; no new AI calls
-app.get('/api/rooms/:code/report', requireInstructor, async (req, res) => {
-  const { code } = req.params;
-  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code' });
-  try {
-    const roomResult = await pool.query(
-      'SELECT code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at FROM rooms WHERE code = $1',
-      [code]
-    );
-    if (!roomResult.rows.length) return res.status(404).json({ error: 'Room not found' });
-    const groupResult = await pool.query(
-      'SELECT g.id, g.name FROM groups g JOIN rooms r ON g.room_id = r.id WHERE r.code = $1 ORDER BY g.created_at ASC',
-      [code]
-    );
-    const client = await redis.getClient();
-    const [graphRaw, summary] = await Promise.all([
-      client.get(`room:${code}:argumentMap`),
-      client.get(`room:${code}:overallSummary`)
-    ]);
-    res.set('Cache-Control', 'no-store');
-    res.json({
-      room: roomResult.rows[0],
-      groups: groupResult.rows.map(g => ({ id: String(g.id), name: g.name })),
-      overallSummary: summary || null,
-      argumentMap: graphRaw ? JSON.parse(graphRaw) : null
-    });
-  } catch (error) {
-    console.error('GET report:', error.message);
-    res.status(500).json({ error: 'Unable to load saved report data' });
   }
 });
 

@@ -102,6 +102,7 @@ router.delete('/:code', requireInstructor, async (req, res) => {
 
     await redis.del(`room:${code}:argumentMap`);
     await redis.del(`room:${code}:overallSummary`);
+    await redis.del(`room:${code}:reportSnapshot`);
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE /api/rooms/:code', err.message);
