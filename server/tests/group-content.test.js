@@ -7,14 +7,19 @@ let responses = [];
 class FakeOpenAI {
   constructor() {
     this.chat = { completions: { create: async input => {
+      assert.equal(input.model, 'gpt-6-luna');
+      assert.equal(input.reasoning_effort, 'none');
+      assert.equal('max_tokens' in input, false);
+      assert.ok(input.max_completion_tokens > 0);
       calls.push(structuredClone(input));
+      if (!input.response_format) return { choices: [{ message: { content: '• A high-level classroom theme.' } }] };
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ statements: responses.shift() || [] }) } }] };
     } } };
   }
 }
 const openaiPath = require.resolve('openai');
 require.cache[openaiPath] = { id: openaiPath, filename: openaiPath, loaded: true, exports: { OpenAI: FakeOpenAI } };
-const { summarizeTranscript } = require('../services/summarize');
+const { summarizeTranscript, synthesizeAllSummaries } = require('../services/summarize');
 const { contextTail, transcriptionOptions } = require('../services/transcription');
 
 test('group content analysis uses original words and contextual topic, with no fixed bullet count or stance classification', async () => {
@@ -45,6 +50,13 @@ test('short substantive input is not discarded or padded; an empty extraction re
   assert.equal(await summarizeTranscript('AI makes mistakes.'), '• AI makes mistakes.');
   responses = [[]];
   assert.equal(await summarizeTranscript('uh, um, okay'), null);
+});
+
+test('overall classroom synthesis also uses Luna and preserves its text output contract', async () => {
+  const result = await synthesizeAllSummaries([{ groupName: 'One', summary: '• An original group point.' }]);
+  assert.equal(result, '• A high-level classroom theme.');
+  assert.equal(calls.at(-1).max_completion_tokens, 2048);
+  assert.match(calls.at(-1).messages[1].content, /An original group point/);
 });
 
 test('recognition context is a bounded suffix of original speech, and language can be automatic', () => {

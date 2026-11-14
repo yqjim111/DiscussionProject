@@ -28,7 +28,7 @@ An instructor login session is required to retrieve the report. The printed Argu
 
 - PDF output uses the browser's native print-to-PDF function; it does not automatically download a file without the print dialog.
 - Generating the AI analysis requires a working backend and a real `OPENAI_API_KEY`. A local test placeholder does not produce actual AI results.
-- Content analysis uses `REPORT_MODEL`, falling back to `ARGUMENT_MAP_MODEL` and then `gpt-4o-mini`; the graph uses `ARGUMENT_MAP_MODEL` or `gpt-4o-mini`. Combined transcripts above 180,000 characters are rejected explicitly rather than silently truncated.
+- Content analysis and the graph use the shared `gpt-6-luna` model in `server/services/textModel.js`; legacy per-feature model environment variables are ignored. Combined report transcripts above 180,000 characters are rejected explicitly rather than silently truncated.
 - Semantic deduplication and position classification are AI interpretations; quotation presence and group provenance are checked in code, but completeness and semantic accuracy still require instructor review.
 - Previous rooms can have no saved instructor name because this metadata was added after initial development.
 - The current room deletion flow permanently removes report data along with other session data; export before ending the session.

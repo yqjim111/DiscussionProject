@@ -10,6 +10,9 @@ const crypto = require('node:crypto');
 process.env.OPENAI_API_KEY = 'test-only-not-a-real-key';
 process.env.NODE_ENV = 'test';
 process.env.INSTRUCTOR_PIN = 'test-pin';
+// A deployment may still have these old values; they must not override Luna.
+process.env.ARGUMENT_MAP_MODEL = 'gpt-4o-mini';
+process.env.REPORT_MODEL = 'gpt-4o-mini';
 
 function mock(relative, exports) {
   const id = require.resolve(relative);
@@ -96,6 +99,10 @@ function graphFor(quote, groupId = groups[0].id) {
 class FakeOpenAI {
   constructor() {
     this.chat = { completions: { create: async input => {
+      assert.equal(input.model, 'gpt-6-luna');
+      assert.equal(input.reasoning_effort, 'none');
+      assert.equal('max_tokens' in input, false);
+      assert.ok(input.max_completion_tokens > 0);
       aiInputs.push(structuredClone(input));
       if (input.response_format.json_schema.name === 'classroom_report') {
         if (failReport) throw Object.assign(new Error('Test quota failure'), { status: 429 });

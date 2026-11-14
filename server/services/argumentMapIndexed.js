@@ -4,6 +4,7 @@ const OpenAI = require('openai').OpenAI;
 const fs = require('fs');
 const path = require('path');
 const { validateGraph } = require('./argumentMap');
+const { textModelOptions } = require('./textModel');
 
 const nodeTypes = ['CLAIM', 'EVIDENCE', 'EXAMPLE', 'PROPOSAL', 'QUESTION', 'UNCLASSIFIED'];
 const schema = {
@@ -105,7 +106,7 @@ async function analyzeArgumentMap({ topic, instructions, groups, onProgress = as
     await onProgress('Analyzing and verifying argument relationships · attempt ' + (attempt + 1));
     try {
       const response = await client.chat.completions.create({
-        model: process.env.ARGUMENT_MAP_MODEL || 'gpt-4o-mini', temperature: 0, max_tokens: 12000,
+        ...textModelOptions(12000), temperature: 0,
         response_format: { type: 'json_schema', json_schema: { name: 'indexed_argument_map', strict: true, schema } }, messages
       });
       const choice = response.choices[0];

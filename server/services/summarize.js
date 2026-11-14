@@ -1,4 +1,5 @@
 const { OpenAI } = require('openai');
+const { textModelOptions } = require('./textModel');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -18,8 +19,7 @@ const OVERALL_SYSTEM_PROMPT =
 
 async function chat(systemPrompt, userContent, maxTokens = 1024) {
   const res = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    max_tokens: maxTokens,
+    ...textModelOptions(maxTokens),
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },
@@ -36,7 +36,7 @@ async function summarizeTranscript(transcript, context = {}) {
   ];
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', temperature: 0, max_tokens: 4096,
+      ...textModelOptions(4096), temperature: 0,
       response_format: { type: 'json_schema', json_schema: {
         name: 'group_content_analysis', strict: true,
         schema: { type: 'object', additionalProperties: false, required: ['statements'], properties: {

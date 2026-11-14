@@ -6,7 +6,10 @@ let mode = 'valid';
 let calls = 0;
 class FakeOpenAI {
   constructor() {
-    this.chat = { completions: { create: async () => {
+    this.chat = { completions: { create: async input => {
+      assert.equal(input.model, 'gpt-6-luna');
+      assert.equal(input.max_completion_tokens, 12000);
+      assert.equal('max_tokens' in input, false);
       calls++;
       if (mode === 'failure') throw Object.assign(new Error('quota'), { status: 429 });
       const result = mode === 'empty' ? { nodes: [], edges: [] } : {

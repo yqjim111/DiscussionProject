@@ -3,6 +3,7 @@
 const { OpenAI } = require('openai');
 const { validateGraph } = require('./argumentMap');
 const crypto = require('crypto');
+const { textModelOptions } = require('./textModel');
 
 function snapshotHash(room, groups) {
   return crypto.createHash('sha256').update(JSON.stringify({
@@ -67,8 +68,7 @@ async function analyzeReport({ room, groups }) {
   ];
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await client.chat.completions.create({
-      model: process.env.REPORT_MODEL || process.env.ARGUMENT_MAP_MODEL || 'gpt-4o-mini',
-      temperature: 0, max_tokens: 16000,
+      ...textModelOptions(16000), temperature: 0,
       response_format: { type: 'json_schema', json_schema: { name: 'classroom_report', strict: true, schema } },
       messages
     });

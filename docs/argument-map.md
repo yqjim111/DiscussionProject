@@ -40,7 +40,7 @@ DATABASE_URL=postgresql://...
 REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=...
 INSTRUCTOR_PIN=replace-with-a-private-instructor-pin
-ARGUMENT_MAP_MODEL=gpt-4o-mini
+# Prompted text analysis uses gpt-6-luna through server/services/textModel.js.
 NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
 FRONTEND_URL=http://localhost:3000
 ```

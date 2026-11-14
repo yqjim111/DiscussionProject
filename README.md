@@ -114,7 +114,7 @@ Open `http://localhost:3000` in your browser.
 
 The optional teacher-facing Argument Map feature reads original group transcripts together with the topic, instructions, and planned duration saved when a room is created. The instructor opens **Argument Map** from the dashboard and generates a source-traceable node/edge graph without entering the same session information again.
 
-- Configure `INSTRUCTOR_PIN` on the backend for instructor sign-in, `OPENAI_API_KEY` for model access, and `ARGUMENT_MAP_MODEL` if a non-default model is needed.
+- Configure `INSTRUCTOR_PIN` on the backend for instructor sign-in and `OPENAI_API_KEY` for model access. All prompted text analysis uses the shared `gpt-6-luna` model configuration.
 - A separate Argument Map demo access token is **not** required.
 - The database schema adds room metadata fields on backend startup.
 - Room creation and Argument Map generation require a valid server-backed instructor session.
@@ -155,6 +155,7 @@ The optional teacher-facing Argument Map feature reads original group transcript
 - Transcripts display as continuous prose without artificial line breaks at audio chunk boundaries. Stored source text is preserved for provenance and existing reports.
 - The browser requests echo cancellation, noise suppression and automatic gain control when supported. The backend passes a short suffix of the previous original transcript as recognition context. `TRANSCRIPTION_LANGUAGE` defaults to `en`; use `zh` for Chinese or `auto` for automatic detection. `TRANSCRIPTION_MODEL` defaults to `whisper-1`. This remains chunked file transcription, not live word-by-word recognition or speaker identification.
 - Run `npm test`, `npx tsc --noEmit`, and `npm run build` before deployment. Tests use mock AI/database adapters and do not incur API charges.
+- All prompt-driven text tasks (group content analysis, overall summary, report analysis and Argument Map) use the current `gpt-6-luna` alias through `server/services/textModel.js`. Legacy `ARGUMENT_MAP_MODEL` / `REPORT_MODEL` values are ignored. Audio transcription continues to use its separate audio-capable model; Luna does not accept audio input.
 
 ---
 
