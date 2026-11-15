@@ -33,6 +33,9 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions TEXT NOT NULL
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS instructor_name TEXT;
+-- Optional presentation countdown only; never expires a room or blocks audio.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_timer JSONB NOT NULL
+  DEFAULT '{"status":"idle","durationSeconds":600,"remainingMs":600000,"endsAt":null}'::jsonb;
 
 -- Durable, independently polled jobs survive browser navigation and backend restarts.
 CREATE TABLE IF NOT EXISTS argument_map_jobs (

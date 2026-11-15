@@ -110,9 +110,8 @@ router.post('/:groupId/summary', async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Group not found' });
     const transcript = await redis.getTranscript(groupId);
-    const manualPoints = await getManualPoints(groupId);
-    if (!transcript.trim() && !manualPoints.some(p => p.text.trim())) return res.status(422).json({ error: 'Record discussion or add a bullet point before generating a summary.' });
-    const summary = await summarizeTranscript(transcript, { topic: rows[0].teacher_topic, instructions: rows[0].discussion_instructions, manualPoints });
+    if (!transcript.trim()) return res.status(422).json({ error: 'Record some discussion before generating an AI summary. Student-written points are saved separately.' });
+    const summary = await summarizeTranscript(transcript, { topic: rows[0].teacher_topic, instructions: rows[0].discussion_instructions });
     if (!summary) return res.status(422).json({ error: 'Record a little more discussion before generating a summary.' });
     await redis.setSummary(groupId, summary);
     const update = { groupId, summary: await redis.getSummary(groupId), aiSummary: summary, manualPoints: await getManualPoints(groupId) };

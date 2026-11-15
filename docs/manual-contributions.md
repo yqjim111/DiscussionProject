@@ -6,9 +6,9 @@ The editor keeps failed writes in a browser draft when storage is available, and
 
 Group listing and `group:points:update` expose the saved points, raw AI summary and effective summary to both teacher and student. A teacher can open any online/offline group to inspect a live upper summary/student-points pane and a lower original transcription pane. Dashboard cards show at most four shortened entries and link to the full discussion. These preview limits never affect storage or analysis.
 
-All analysis paths include manual input:
+Input scope by analysis path:
 
-- Student AI summary: original transcript plus explicitly separate manual contributions; works without audio.
+- Student **Generate AI Summary**: original recorded transcript only. Saved manual points, edited bullets and prior summaries are excluded from the model payload. With no transcript, no AI request is made. Manual points remain separately saved and visible alongside the generated summary.
 - Teacher overall synthesis: effective group summaries include saved manual contributions.
 - Shared Argument Map/report job: captures original transcripts, all saved manual points and group members in one source snapshot. Each indexed source records `source_kind` (`manual` or `transcript`) and the manual contribution ID. Citation validation uses actual original contributions; a typed note is never called a spoken utterance.
 - PDF and Markdown: preserve the saved map snapshot; the transcript appendix lists student-written contributions separately from recorded speech. Changed points make an existing map/report stale until the teacher regenerates it.

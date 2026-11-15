@@ -25,3 +25,37 @@
 .role-instructor .bg-red-600 { background-color: var(--role-button); }
 .role-instructor .bg-red-600:hover { background-color: var(--role-hover); }
 .role-student [class~="bg-indigo-950/90"] { background-color: rgb(6 95 70 / 90%); }
+
+/* Full-window classroom projection, portalled outside sticky page headers. */
+.discussion-screen { position: fixed; inset: 0; z-index: 1000; width: 100%; height: 100dvh; min-height: 0; display: flex; flex-direction: column; background: #fffaf6; color: #241c18; }
+.discussion-screen:fullscreen { width: 100%; height: 100%; }
+.instruction-header { flex-shrink: 0; padding: 18px clamp(20px, 3vw, 56px); background: linear-gradient(120deg, #ffebde, #fff7f0 65%, #ffe5d2); border-bottom: 1px solid #efc3ad; }
+.instruction-toolbar, .instruction-actions, .instruction-timer-bar, .instruction-timer-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.instruction-toolbar { justify-content: space-between; gap: 16px; }
+.instruction-toolbar h2 { font-size: 20px; font-weight: 750; }
+.instruction-room { color: #a63b1a; font-size: 13px; font-weight: 650; margin-bottom: 3px; }
+.discussion-screen button { border: 1px solid #e8c2ae; border-radius: 12px; background: #fffaf7; padding: 10px 16px; font-size: 15px; font-weight: 650; color: #78321b; transition: background .15s; }
+.discussion-screen button:hover:not(:disabled) { background: #ffe6d6; }
+.discussion-screen button:disabled { opacity: .4; cursor: default; }
+.discussion-screen button.instruction-primary { background: #d83b11; color: #fff; border-color: #d83b11; }
+.discussion-screen button.instruction-primary:hover:not(:disabled) { background: #b93210; }
+.instruction-font-controls { display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid #e8c2ae; border-radius: 14px; background: #fffaf7; }
+.instruction-font-controls button { border: 0; padding: 5px 12px; font-size: 21px; line-height: 1; min-height: 34px; }
+.instruction-font-controls span { width: 48px; text-align: center; color: #78321b; font-size: 13px; font-weight: 650; }
+.instruction-timer-bar { justify-content: space-between; margin-top: 16px; gap: 20px; }
+.instruction-countdown { display: flex; align-items: center; gap: 22px; color: #b33413; }
+.instruction-countdown [role="timer"] { font-size: clamp(52px, 6.5vw, 104px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -.045em; line-height: 1; }
+.instruction-timer-label { max-width: 90px; font-size: 16px; line-height: 1.35; font-weight: 650; }
+.instruction-countdown[data-status="paused"] [role="timer"] { color: #8e4e36; }
+.instruction-countdown[data-status="finished"] [role="timer"] { color: #cc3211; }
+.instruction-timer-controls { align-items: flex-end; }
+.instruction-timer-controls label { display: flex; flex-direction: column; gap: 4px; color: #873b21; font-size: 12px; font-weight: 650; }
+.instruction-timer-controls input { width: 108px; padding: 8px 12px; border: 1px solid #e8c2ae; border-radius: 12px; background: #fffaf7; color: #78321b; font-size: 21px; font-weight: 650; }
+.instruction-error { margin: 0; flex-shrink: 0; padding: 10px 24px; background: #fff0e9; color: #a3290a; font-size: 15px; }
+.instruction-content { width: 100%; max-width: 1600px; margin: 0 auto; padding: clamp(24px, 3.5vw, 64px); overflow-y: auto; flex: 1; min-height: 0; }
+.instruction-content section + section { margin-top: 36px; }
+.instruction-section-label { display: block; margin-bottom: 12px; color: #a33b1b; font-size: 16px; letter-spacing: .035em; font-weight: 700; }
+.instruction-topic { font-size: 1.15em; font-weight: 750; line-height: 1.25; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instruction-body { line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instruction-section-label textarea { display: block; width: 100%; margin: 10px 0 28px; padding: 16px; border: 1px solid #e8c2ae; border-radius: 14px; background: #fff; font-weight: 400; line-height: 1.4; color: #241c18; letter-spacing: normal; }
+@media (max-width: 700px) { .instruction-header { padding: 14px 16px; } .instruction-actions { gap: 6px; } .discussion-screen button { padding: 8px 11px; font-size: 13px; } .instruction-timer-bar { margin-top: 12px; gap: 12px; } .instruction-countdown [role="timer"] { font-size: 56px; } .instruction-timer-controls { gap: 8px; } .instruction-content { padding: 24px 18px; } }

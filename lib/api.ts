@@ -17,6 +17,12 @@ export interface Room {
   instructor_name: string | null;
   discussion_instructions: string;
   duration_minutes: number | null;
+  discussion_timer?: { status: string; durationSeconds: number; remainingMs: number; endsAt: number | null };
+  server_now?: number;
+}
+
+export function updateDiscussionTimer(code: string, action: 'start' | 'pause' | 'resume' | 'reset', durationSeconds?: number): Promise<{ room: Room }> {
+  return request(`/api/rooms/${code}/timer`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, durationSeconds }) });
 }
 
 export interface ManualPoint { id: string; text: string; replacesText?: string | null }

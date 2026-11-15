@@ -83,6 +83,10 @@ mock('../db/pool', { query: async (sql, args = []) => {
     else job.stage = args[0];
     return { rows: [{ room_code: job.room_code }] };
   }
+  if (sql.startsWith('UPDATE rooms SET discussion_timer')) {
+    if (JSON.stringify(room.discussion_timer ?? null) !== args[2]) return { rows: [] };
+    room.discussion_timer = JSON.parse(args[0]); return { rows: [{ ...room }] };
+  }
   if (sql.startsWith('UPDATE rooms')) { room.teacher_topic = args[0]; room.discussion_instructions = args[1]; return { rows: [{ ...room }] }; }
   if (sql.startsWith('INSERT INTO rooms')) return { rows: [{ ...room, duration_minutes: args[3] }] };
   if (sql.includes('SELECT id FROM rooms WHERE code')) return { rows: [] };
@@ -255,7 +259,35 @@ test('teacher updates topic and instructions live; duration is not required', as
   assert.equal(denied.status, 401);
 });
 
-test('manual points are durable, visible live to instructors and included in summary input without altering transcripts', async () => {
+test('presentation timer is instructor-controlled, shared live and never expires the discussion or transcript', async () => {
+  const observer = await socket();
+  await observer.emitWithAck('group:join', { roomCode: room.code, groupId: groups[0].id });
+  const patch = (body, auth = true) => fetch(base + '/api/rooms/' + room.code + '/timer', { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(auth ? { Cookie: cookie } : {}) }, body: JSON.stringify(body) });
+  assert.equal((await patch({ action: 'start', durationSeconds: 90 }, false)).status, 401);
+  const notification = once(observer, 'room:updated');
+  const started = await (await patch({ action: 'start', durationSeconds: 90 })).json();
+  assert.equal(started.room.discussion_timer.status, 'running');
+  assert.equal((await notification)[0].room.discussion_timer.endsAt, started.room.discussion_timer.endsAt);
+  const paused = await (await patch({ action: 'pause' })).json();
+  assert.equal(paused.room.discussion_timer.status, 'paused');
+  assert.ok(paused.room.discussion_timer.remainingMs > 80000);
+  const resumed = await (await patch({ action: 'resume' })).json();
+  assert.equal(resumed.room.discussion_timer.status, 'running');
+  const changed = await (await patch({ action: 'start', durationSeconds: 30 })).json();
+  assert.equal(changed.room.discussion_timer.durationSeconds, 30);
+  assert.equal((await patch({ action: 'start', durationSeconds: -1 })).status, 400);
+  const originalText = await redis.getTranscript(groups[0].id);
+  room.discussion_timer.endsAt = Date.now() - 1000;
+  const finished = await (await fetch(base + '/api/rooms/' + room.code)).json();
+  assert.equal(finished.room.discussion_timer.status, 'finished');
+  assert.equal(finished.room.discussion_timer.remainingMs, 0);
+  assert.equal(await redis.getTranscript(groups[0].id), originalText);
+  const stillAvailable = await fetch(base + '/api/groups/' + room.code);
+  assert.equal(stillAvailable.status, 200, 'Timer expiry must not end the room');
+  assert.equal((await (await patch({ action: 'reset', durationSeconds: 120 })).json()).room.discussion_timer.status, 'idle');
+});
+
+test('manual points remain saved and visible but group AI summary uses recorded transcripts only', async () => {
   const student = await socket();
   await student.emitWithAck('group:join', { roomCode: room.code, groupId: groups[1].id });
   const pointId = crypto.randomUUID();
@@ -269,9 +301,16 @@ test('manual points are durable, visible live to instructors and included in sum
   const listed = await (await fetch(base + '/api/groups/' + room.code)).json();
   assert.equal(listed.groups.find(g => g.id === groups[1].id).manualPoints[0].text, text);
   await client.set('group:' + groups[1].id + ':transcript', '');
-  assert.equal((await post('/api/groups/' + groups[1].id + '/summary', {})).status, 200);
-  assert.equal(lastSummaryInput.transcript, '');
-  assert.equal(lastSummaryInput.context.manualPoints[0].text, text);
+  const callsBefore = summaryCalls;
+  assert.equal((await post('/api/groups/' + groups[1].id + '/summary', {})).status, 422);
+  assert.equal(summaryCalls, callsBefore, 'Manual-only input must not trigger group AI analysis');
+  await client.set('group:' + groups[1].id + ':transcript', 'Original recorded speech only.');
+  const generated = await post('/api/groups/' + groups[1].id + '/summary', {});
+  assert.equal(generated.status, 200);
+  assert.equal(lastSummaryInput.transcript, 'Original recorded speech only.');
+  assert.equal('manualPoints' in lastSummaryInput.context, false);
+  assert.equal((await generated.json()).manualPoints[0].text, text, 'Generating AI summary must preserve manual points');
+  await client.set('group:' + groups[1].id + ':transcript', '');
   assert.equal(await redis.getTranscript(groups[1].id), '', 'Manual notes must not be mislabeled as recorded speech');
   await fetch(base + '/api/groups/' + groups[1].id + '/points/' + pointId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'A saved student-written viewpoint.' }) });
 });
