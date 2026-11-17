@@ -28,11 +28,13 @@ async function enqueue(code, input) {
   return rows[0] || getJob(code);
 }
 
-async function requestReport(code, refreshSummary = false) {
+async function requestReport(code, refreshSummary = false, needsThematic = false) {
   const { rows } = await pool.query(`UPDATE argument_map_jobs
     SET input = input || jsonb_build_object('reportRequested', true,
-      'refreshSummary', COALESCE((input->>'refreshSummary')::boolean, false) OR $2::boolean), updated_at = NOW()
-    WHERE room_code = $1 AND status IN ('queued', 'running') RETURNING *`, [code, refreshSummary]);
+      'refreshSummary', COALESCE((input->>'refreshSummary')::boolean, false) OR $2::boolean,
+      'thematicRequested', COALESCE((input->>'thematicRequested')::boolean, false) OR $3::boolean
+        OR NOT COALESCE((input->>'reuseSavedMap')::boolean, false)), updated_at = NOW()
+    WHERE room_code = $1 AND status IN ('queued', 'running') RETURNING *`, [code, refreshSummary, needsThematic]);
   return rows[0] || null;
 }
 

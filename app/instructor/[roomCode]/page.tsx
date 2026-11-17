@@ -139,7 +139,7 @@ export default function InstructorDashboard() {
           <div className="flex flex-wrap items-center gap-3">
             <DiscussionInstructions roomCode={roomCode} editable />
             <Link
-              href={`/instructor/${roomCode}/report`}
+              href={`/instructor/${roomCode}/report?generate=1`}
               className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm"
             >
               Generate report

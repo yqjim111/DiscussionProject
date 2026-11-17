@@ -17,7 +17,8 @@ router.post('/', requireInstructor, async (req, res) => {
   const instructorName = typeof req.body?.instructor_name === 'string' ? req.body.instructor_name.trim() : '';
   const teacherTopic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
   const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
-  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000) {
+  const instructionsHtml = typeof req.body?.discussion_instructions_html === 'string' ? req.body.discussion_instructions_html : '';
+  if (!teacherTopic || teacherTopic.length > 1500 || !instructorName || instructorName.length > 255 || instructions.length > 5000 || instructionsHtml.length > 100000) {
     return res.status(400).json({ error: 'Instructor name and topic are required; instructions are optional' });
   }
   try {
@@ -31,8 +32,8 @@ router.post('/', requireInstructor, async (req, res) => {
     if (!code) return res.status(500).json({ error: 'Could not generate unique room code' });
 
     const { rows } = await pool.query(
-      'INSERT INTO rooms (code, teacher_topic, discussion_instructions, duration_minutes, instructor_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at',
-      [code, teacherTopic, instructions, null, instructorName]
+      'INSERT INTO rooms (code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, discussion_instructions_html) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at, discussion_instructions_html',
+      [code, teacherTopic, instructions, null, instructorName, instructionsHtml]
     );
     res.status(201).json({ room: roomPayload(rows[0]) });
   } catch (err) {
@@ -48,7 +49,7 @@ router.get('/:code', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at, discussion_timer FROM rooms WHERE code = $1',
+      'SELECT id, code, teacher_topic, discussion_instructions, duration_minutes, instructor_name, created_at, discussion_timer, discussion_instructions_html FROM rooms WHERE code = $1',
       [code]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Room not found' });
@@ -62,13 +63,14 @@ router.get('/:code', async (req, res) => {
 router.patch('/:code', requireInstructor, async (req, res) => {
   const topic = typeof req.body?.teacher_topic === 'string' ? req.body.teacher_topic.trim() : '';
   const instructions = typeof req.body?.discussion_instructions === 'string' ? req.body.discussion_instructions.trim() : '';
-  if (!/^\d{6}$/.test(req.params.code) || !topic || topic.length > 1500 || instructions.length > 5000) {
+  const instructionsHtml = typeof req.body?.discussion_instructions_html === 'string' ? req.body.discussion_instructions_html : '';
+  if (!/^\d{6}$/.test(req.params.code) || !topic || topic.length > 1500 || instructions.length > 5000 || instructionsHtml.length > 100000) {
     return res.status(400).json({ error: 'A topic (up to 1500 characters) and optional instructions (up to 5000 characters) are required.' });
   }
   try {
     const { rows } = await pool.query(
-      'UPDATE rooms SET teacher_topic = $1, discussion_instructions = $2 WHERE code = $3 RETURNING *',
-      [topic, instructions, req.params.code]
+      'UPDATE rooms SET teacher_topic = $1, discussion_instructions = $2, discussion_instructions_html = $4 WHERE code = $3 RETURNING *',
+      [topic, instructions, req.params.code, instructionsHtml]
     );
     if (!rows.length) return res.status(404).json({ error: 'Room not found' });
     const room = roomPayload(rows[0]);

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { InstructionEditor } from '@/components/InstructionRichText';
 import { createRoom, loginInstructor } from '@/lib/api';
 
 
@@ -17,6 +18,7 @@ export default function InstructorCreate() {
   const [topic, setTopic] = useState('');
   const [instructorName, setInstructorName] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [instructionsHtml, setInstructionsHtml] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
   async function handlePinSubmit() {
@@ -36,7 +38,7 @@ export default function InstructorCreate() {
   }
 
   async function handleCreate() {
-    if (!topic.trim() || !instructorName.trim() || topic.length > 1500 || instructions.length > 5000) {
+    if (!topic.trim() || !instructorName.trim() || topic.length > 1500 || instructions.length > 5000 || instructionsHtml.length > 100000) {
       setError('Enter your instructor name and a topic.');
       return;
     }
@@ -47,6 +49,7 @@ export default function InstructorCreate() {
         teacher_topic: topic.trim(),
         instructor_name: instructorName.trim(),
         discussion_instructions: instructions.trim(),
+        discussion_instructions_html: instructionsHtml,
       });
       setRoomCode(room.code);
       setTimeout(() => router.push(`/instructor/${room.code}`), 3000);
@@ -129,17 +132,10 @@ export default function InstructorCreate() {
                 onChange={(e) => setTopic(e.target.value)}
               />
             </label>
-            <label className="block text-sm font-semibold text-gray-700">
+            <div className="block text-sm font-semibold text-gray-700">
               Discussion Instructions (optional)
-              <textarea
-                className="block w-full mt-2 p-3 border border-gray-300 rounded-lg text-sm"
-                rows={4}
-                maxLength={5000}
-                placeholder="Questions, subtopics, or ordered discussion tasks"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-              />
-            </label>
+              <InstructionEditor text={instructions} html={instructionsHtml} onChange={(text, html) => { setInstructions(text); setInstructionsHtml(html); }} />
+            </div>
             <button
               onClick={handleCreate}
               disabled={loading}

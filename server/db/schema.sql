@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS group_notes (
 -- Backward-compatible session metadata: existing room rows remain valid.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS teacher_topic TEXT;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions TEXT NOT NULL DEFAULT '';
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discussion_instructions_html TEXT NOT NULL DEFAULT '';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS instructor_name TEXT;

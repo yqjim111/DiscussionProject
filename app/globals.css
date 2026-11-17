@@ -59,3 +59,16 @@
 .instruction-body { line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .instruction-section-label textarea { display: block; width: 100%; margin: 10px 0 28px; padding: 16px; border: 1px solid #e8c2ae; border-radius: 14px; background: #fff; font-weight: 400; line-height: 1.4; color: #241c18; letter-spacing: normal; }
 @media (max-width: 700px) { .instruction-header { padding: 14px 16px; } .instruction-actions { gap: 6px; } .discussion-screen button { padding: 8px 11px; font-size: 13px; } .instruction-timer-bar { margin-top: 12px; gap: 12px; } .instruction-countdown [role="timer"] { font-size: 56px; } .instruction-timer-controls { gap: 8px; } .instruction-content { padding: 24px 18px; } }
+
+/* Tailwind preflight removes list markers; restore them for pasted slide text. */
+.instruction-rich-text { font-weight: 400; color: #241c18; letter-spacing: normal; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.instruction-rich-text ul, .instruction-rich-text ol { padding-left: 1.5em; margin: .25em 0; }
+.instruction-rich-text ul { list-style-type: disc; }
+.instruction-rich-text ul ul { list-style-type: circle; }
+.instruction-rich-text ul ul ul { list-style-type: square; }
+.instruction-rich-text ol { list-style-type: decimal; }
+.instruction-rich-text li { display: list-item; }
+.instruction-rich-text p { margin: .25em 0; }
+.instruction-rich-text b, .instruction-rich-text strong { font-weight: 700; }
+.instruction-editor { min-height: 12em; width: 100%; margin: 10px 0; padding: 16px; border: 1px solid #e8c2ae; border-radius: 14px; background: #fff; font-size: 1rem; }
+.instruction-editor:focus { outline: 2px solid #a63b1a; outline-offset: 2px; }

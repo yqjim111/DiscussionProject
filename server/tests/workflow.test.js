@@ -66,8 +66,11 @@ mock('../db/pool', { query: async (sql, args = []) => {
   if (sql.includes('SET input = input ||')) {
     const job = jobs.get(args[0]);
     if (!job || !['queued', 'running'].includes(job.status)) return { rows: [] };
-    if (sql.includes("'thematicRequested'")) job.input.thematicRequested = true;
-    else { job.input.reportRequested = true; job.input.refreshSummary = Boolean(job.input.refreshSummary || args[1]); }
+    if (sql.includes("'reportRequested'")) {
+      job.input.reportRequested = true;
+      job.input.refreshSummary = Boolean(job.input.refreshSummary || args[1]);
+      job.input.thematicRequested = Boolean(job.input.thematicRequested || args[2] || !job.input.reuseSavedMap);
+    } else job.input.thematicRequested = true;
     return { rows: [structuredClone(job)] };
   }
   if (sql.includes('UPDATE argument_map_jobs')) {
@@ -375,8 +378,10 @@ test('report reuses the authoritative map, its four categories and exact source 
   await completeJobs();
   const report = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
   assert.equal(report.overallSummary, 'High-level classroom synthesis.');
-  assert.deepEqual(report.argumentMap, job.result);
-  assert.equal(aiInputs.length, calls + 1, 'Only one summary call; no new graph or content extraction');
+  assert.deepEqual(report.argumentMap.nodes, job.result.nodes);
+  assert.deepEqual(report.argumentMap.edges, job.result.edges);
+  assert.equal(report.thematicAnalysis.status, 'completed');
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review', 'report_overall_summary'], 'Complete missing thematic analysis and summary without new graph extraction');
   assert.equal(aiInputs.at(-1).response_format.json_schema.name, 'report_overall_summary');
   assert.equal(report.groups[0].transcript, 'Original first group speech.');
   assert.deepEqual(report.groups[0].members, ['A']);
@@ -400,6 +405,44 @@ test('report reuses the authoritative map, its four categories and exact source 
   assert.equal(updated.overallSummary, null);
   assert.equal(updated.contentAnalysis.statements[0].statement, 'New saved map statement');
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {})).status, 401);
+});
+
+test('reports with an existing summary fill missing thematic analysis and retry failures without regenerating the map or summary', async () => {
+  failReport = false;
+  const graph = jobs.get(room.code).result;
+  delete graph.thematic_analysis;
+  await require('../services/reportStore').finishReport(room.code, graph, false, graph.source_snapshot);
+  const nodes = structuredClone(graph.nodes);
+  failThematic = true;
+  const calls = aiInputs.length;
+  assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 202);
+  await completeJobs();
+  assert.equal(jobs.get(room.code).result.thematic_analysis.status, 'unavailable');
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes']);
+  failThematic = false;
+  const retryCalls = aiInputs.length;
+  assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 202);
+  await completeJobs();
+  const report = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
+  assert.equal(report.thematicAnalysis.status, 'completed');
+  assert.equal(report.overallSummary, 'High-level classroom synthesis.');
+  assert.deepEqual(report.argumentMap.nodes, nodes);
+  assert.deepEqual(aiInputs.slice(retryCalls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review']);
+  const completedCalls = aiInputs.length;
+  assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 200);
+  assert.equal(aiInputs.length, completedCalls);
+
+  // A regenerating map retains its previous result while running. Its old
+  // completed themes must not suppress thematic analysis of the new map.
+  let release;
+  aiGate = new Promise(resolve => { release = resolve; });
+  await post('/api/rooms/' + room.code + '/argument-map', {}, true);
+  const freshCalls = aiInputs.length;
+  await post('/api/rooms/' + room.code + '/report/generate', {}, true);
+  assert.equal(jobs.get(room.code).input.thematicRequested, true);
+  release(); aiGate = null; await completeJobs();
+  assert.equal(jobs.get(room.code).result.thematic_analysis.status, 'completed');
+  assert.ok(aiInputs.slice(freshCalls).some(i => i.response_format.json_schema.name === 'thematic_review'));
 });
 
 test('report-first generation and simultaneous map requests share one durable analysis and survive page navigation', async () => {
@@ -426,14 +469,15 @@ test('report-first generation and simultaneous map requests share one durable an
   assert.ok(map.graph?.nodes.length, 'Map is visible before the summary completes');
   const reopening = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
   assert.equal(reopening.reportPending, true);
-  assert.deepEqual(reopening.argumentMap, map.graph);
+  assert.deepEqual(reopening.argumentMap.nodes, map.graph.nodes);
   releaseSummary(); summaryGate = null;
   await completeJobs();
   const complete = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
   assert.equal(complete.reportPending, false);
   assert.equal(complete.overallSummary, 'High-level classroom synthesis.');
-  assert.deepEqual(complete.argumentMap, map.graph);
-  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['indexed_argument_map', 'report_overall_summary']);
+  assert.deepEqual(complete.argumentMap.nodes, map.graph.nodes);
+  assert.equal(complete.thematicAnalysis.status, 'completed');
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['indexed_argument_map', 'thematic_codes', 'thematic_synthesis', 'thematic_review', 'report_overall_summary']);
   const count = aiInputs.length;
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 200);
   assert.equal(aiInputs.length, count, 'Completed results must be reused');

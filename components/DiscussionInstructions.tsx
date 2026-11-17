@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getRoom, updateRoom, updateDiscussionTimer, type Room } from '@/lib/api';
 import { readTimer, formatTimer } from '@/lib/discussionTimer';
+import { InstructionEditor, InstructionText } from './InstructionRichText';
 import { getSocket } from '@/lib/socket';
 
 export default function DiscussionInstructions({ roomCode, editable = false }: { roomCode: string; editable?: boolean }) {
@@ -12,6 +13,7 @@ export default function DiscussionInstructions({ roomCode, editable = false }: {
   const [room, setRoom] = useState<Room | null>(null);
   const [topic, setTopic] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [instructionsHtml, setInstructionsHtml] = useState('');
   const [saving, setSaving] = useState(false);
   const [timerBusy, setTimerBusy] = useState(false);
   const [error, setError] = useState('');
@@ -59,7 +61,7 @@ export default function DiscussionInstructions({ roomCode, editable = false }: {
     setError(''); setEditing(false); setOpen(true);
     try {
       const { room: latest } = await getRoom(roomCode);
-      receive(latest); setTopic(latest.teacher_topic || ''); setInstructions(latest.discussion_instructions || '');
+      receive(latest); setTopic(latest.teacher_topic || ''); setInstructions(latest.discussion_instructions || ''); setInstructionsHtml(latest.discussion_instructions_html || '');
       setMinutes(String(Math.round(readTimer(latest.discussion_timer).durationSeconds / 60 * 100) / 100));
     } catch { setError('Unable to load discussion instructions. Close and try again.'); }
   }
@@ -78,11 +80,11 @@ export default function DiscussionInstructions({ roomCode, editable = false }: {
     const next = Math.max(24, Math.min(96, fontSize + delta)); setFontSize(next);
     try { localStorage.setItem('classdiscuss:instruction-font:' + roomCode, String(next)); } catch { /* font size remains usable */ }
   }
-  function edit() { setTopic(room?.teacher_topic || ''); setInstructions(room?.discussion_instructions || ''); setEditing(true); setError(''); }
+  function edit() { setTopic(room?.teacher_topic || ''); setInstructions(room?.discussion_instructions || ''); setInstructionsHtml(room?.discussion_instructions_html || ''); setEditing(true); setError(''); }
   async function save() {
     setSaving(true); setError('');
     try {
-      const { room: updated } = await updateRoom(roomCode, { teacher_topic: topic, discussion_instructions: instructions });
+      const { room: updated } = await updateRoom(roomCode, { teacher_topic: topic, discussion_instructions: instructions, discussion_instructions_html: instructionsHtml });
       receive(updated); setEditing(false);
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to save instructions.'); }
     finally { setSaving(false); }
@@ -117,7 +119,7 @@ export default function DiscussionInstructions({ roomCode, editable = false }: {
               <button aria-label="Increase instruction font size" disabled={fontSize >= 96} onClick={() => changeFont(4)}>＋</button>
             </div>}
             {editable && !editing && <button onClick={edit}>Edit discussion</button>}
-            {editable && editing && <><button disabled={saving} onClick={() => setEditing(false)}>Cancel edit</button><button className="instruction-primary" disabled={saving || !room || !topic.trim()} onClick={() => void save()}>{saving ? 'Saving…' : 'Save Changes'}</button></>}
+            {editable && editing && <><button disabled={saving} onClick={() => setEditing(false)}>Cancel edit</button><button className="instruction-primary" disabled={saving || !room || !topic.trim() || instructions.length > 5000 || instructionsHtml.length > 100000} onClick={() => void save()}>{saving ? 'Saving…' : 'Save Changes'}</button></>}
             <button onClick={() => void toggleFullscreen()}>{fullscreen ? 'Exit full screen' : 'Full screen'}</button>
             <button ref={closeButton} disabled={saving} onClick={() => void close()}>Close</button>
           </div>
@@ -139,10 +141,10 @@ export default function DiscussionInstructions({ roomCode, editable = false }: {
       <main className="instruction-content" style={{ fontSize }}>
         {editing ? <>
           <label className="instruction-section-label">Discussion Topic<textarea aria-label="Discussion Topic" value={topic} onChange={e => setTopic(e.target.value)} maxLength={1500} rows={2} style={{ fontSize }} /></label>
-          <label className="instruction-section-label">Discussion Instructions<textarea aria-label="Discussion Instructions" value={instructions} onChange={e => setInstructions(e.target.value)} maxLength={5000} rows={7} style={{ fontSize }} /></label>
+          <div className="instruction-section-label">Discussion Instructions<InstructionEditor text={instructions} html={instructionsHtml} onChange={(text, html) => { setInstructions(text); setInstructionsHtml(html); }} fontSize={fontSize} /></div>
         </> : <>
           <section><h3 className="instruction-section-label">Discussion Topic</h3><p className="instruction-topic">{room?.teacher_topic || 'No topic provided.'}</p></section>
-          <section><h3 className="instruction-section-label">Discussion Instructions</h3><p className="instruction-body">{room?.discussion_instructions || 'No additional instructions.'}</p></section>
+          <section><h3 className="instruction-section-label">Discussion Instructions</h3><InstructionText text={room?.discussion_instructions || 'No additional instructions.'} html={room?.discussion_instructions_html} /></section>
         </>}
       </main>
     </div>, document.body)}

@@ -62,6 +62,8 @@ export default function SessionReportPage() {
 
   useEffect(() => {
     let active = true;
+    let autoRequested = false;
+    const generateOnOpen = new URLSearchParams(window.location.search).get('generate') === '1';
     setLoading(true);
     const poll = async () => {
       const version = requestVersion.current;
@@ -69,7 +71,10 @@ export default function SessionReportPage() {
         const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/report', { credentials: 'include', cache: 'no-store' });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Unable to load session report');
-        if (active && version === requestVersion.current) applyReport(result);
+        if (active && version === requestVersion.current) {
+          applyReport(result);
+          if (generateOnOpen && !autoRequested) { autoRequested = true; await generateReport(false); }
+        }
       } catch (err) { if (active) setError(err instanceof Error ? err.message : 'Failed to load report'); }
       finally { if (active) setLoading(false); }
     };
@@ -107,13 +112,13 @@ export default function SessionReportPage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function generateReport() {
+  async function generateReport(refreshSummary = Boolean(report?.overallSummary && report?.thematicAnalysis?.status === 'completed')) {
     requestVersion.current++;
     setGenerating(true); setError('');
     try {
       const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/report/generate', {
         method: 'POST', credentials: 'include', cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshSummary: Boolean(report?.overallSummary) })
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshSummary })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to generate report');
@@ -134,7 +139,7 @@ export default function SessionReportPage() {
         <Link href={'/instructor/' + roomCode} className="text-indigo-700 font-semibold">← Back to Instructor Dashboard</Link>
         <button onClick={() => void generateReport()} disabled={loading || generating || !report}
           className="rounded-xl border border-indigo-600 text-indigo-700 disabled:opacity-40 font-semibold px-6 py-3">
-          {generating ? 'Generating report…' : report?.overallSummary ? 'Refresh Overall Summary' : 'Generate Report'}
+          {generating ? 'Generating report…' : report?.overallSummary && report?.thematicAnalysis?.status === 'completed' ? 'Refresh report' : 'Generate Report'}
         </button>
         <button onClick={exportMarkdown} disabled={!mapSvg || generating}
           className="rounded-xl border border-indigo-600 text-indigo-700 disabled:opacity-40 font-semibold px-6 py-3">Export Markdown ZIP</button>

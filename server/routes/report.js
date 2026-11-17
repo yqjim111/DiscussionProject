@@ -47,23 +47,24 @@ router.post('/:code/report/generate', async (req, res) => {
       const report = await readReport(req.params.code);
       if (!report) return res.status(404).json({ error: 'Room not found' });
       const refreshSummary = req.body?.refreshSummary === true;
-      if (report.overallSummary && !refreshSummary && !report.reportPending && !['queued', 'running'].includes(report.job?.status)) {
+      const needsThematic = report.thematicAnalysis?.status !== 'completed';
+      if (report.overallSummary && !needsThematic && !refreshSummary && !report.reportPending && !['queued', 'running'].includes(report.job?.status)) {
         return res.json(report);
       }
       let job;
       if (['queued', 'running'].includes(report.job?.status)) {
-        job = await jobs.requestReport(req.params.code, refreshSummary);
+        job = await jobs.requestReport(req.params.code, refreshSummary, needsThematic);
         if (!job) continue;
       } else {
         const source = report.argumentMap?.source_snapshot || {
           topic: report.room.teacher_topic || '', instructions: report.room.discussion_instructions || '', groups: report.groups,
         };
         job = await jobs.enqueue(req.params.code, { ...source,
-          reportRequested: true, refreshSummary,
+          reportRequested: true, refreshSummary, thematicRequested: needsThematic,
           reuseSavedMap: Boolean(report.argumentMap), reuseGraph: report.argumentMap,
         });
         // enqueue may have joined a map job started concurrently from the map page.
-        job = await jobs.requestReport(req.params.code, refreshSummary);
+        job = await jobs.requestReport(req.params.code, refreshSummary, needsThematic);
         if (!job) continue;
       }
       res.set('Cache-Control', 'no-store');

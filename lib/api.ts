@@ -16,6 +16,7 @@ export interface Room {
   teacher_topic: string | null;
   instructor_name: string | null;
   discussion_instructions: string;
+  discussion_instructions_html?: string;
   duration_minutes: number | null;
   discussion_timer?: { status: string; durationSeconds: number; remainingMs: number; endsAt: number | null };
   server_now?: number;
@@ -50,6 +51,7 @@ export function createRoom(data: {
   teacher_topic: string;
   instructor_name: string;
   discussion_instructions: string;
+  discussion_instructions_html?: string;
 }): Promise<{ room: Room }> {
   return request('/api/rooms', {
     method: 'POST',
@@ -62,7 +64,7 @@ export function getRoom(code: string): Promise<{ room: Room }> {
   return request(`/api/rooms/${code}`);
 }
 
-export function updateRoom(code: string, data: { teacher_topic: string; discussion_instructions: string }): Promise<{ room: Room }> {
+export function updateRoom(code: string, data: { teacher_topic: string; discussion_instructions: string; discussion_instructions_html?: string }): Promise<{ room: Room }> {
   return request(`/api/rooms/${code}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   });
