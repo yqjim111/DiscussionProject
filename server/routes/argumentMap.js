@@ -7,6 +7,7 @@ const jobs = require('../services/argumentMapJobs');
 const { requireInstructor } = require('../services/instructorAuth');
 const { getManualPoints } = require('../services/manualPoints');
 const { readSession } = require('../services/reportStore');
+const { publicClaimGraph } = require('../services/claimReportAnalysis');
 
 const router = express.Router();
 
@@ -34,7 +35,7 @@ router.post('/:code/thematic-analysis', requireInstructor, async (req, res) => {
         job = await jobs.requestThematic(code);
       }
       if (!job) continue;
-      res.status(202).json({ job: jobs.publicJob(job), graph: job.result || graph || null });
+      res.status(202).json({ job: jobs.publicJob(job), graph: publicClaimGraph(job.result || graph || null) });
       setImmediate(() => { void jobs.wakeWorker(); }); return;
     }
     res.status(409).json({ error: 'Generation state changed. Please retry.' });
@@ -65,8 +66,9 @@ router.post('/:code/argument-map', requireInstructor, async (req, res) => {
       manualPoints: await getManualPoints(g.id),
       transcript: await redis.getTranscript(g.id)
     })));
-    const job = await jobs.enqueue(code, { topic: teacherTopic || '', instructions, groups });
-    res.status(202).json({ job: jobs.publicJob(job), graph: job.result || null });
+    const previous = await jobs.getJob(code);
+    const job = await jobs.enqueue(code, { topic: teacherTopic || '', instructions, groups, pipelineCheckpoints: previous?.input?.pipelineCheckpoints || {} });
+    res.status(202).json({ job: jobs.publicJob(job), graph: job.result?.generation?.mode === 'extractive_fallback' ? null : publicClaimGraph(job.result || null) });
     // Detached from the HTTP request: navigation does not cancel the worker.
     setImmediate(() => { void jobs.wakeWorker(); });
   } catch (error) {
@@ -82,7 +84,8 @@ router.get('/:code/argument-map', requireInstructor, async (req, res) => {
     const job = await jobs.getJob(code);
     const cached = job?.result ? null : await (await redis.getClient()).get('room:' + code + ':argumentMap');
     res.set('Cache-Control', 'no-store');
-    res.json({ job: jobs.publicJob(job), graph: job?.result || (cached ? JSON.parse(cached) : null) });
+    const graph = job?.result || (cached ? JSON.parse(cached) : null);
+    res.json({ job: jobs.publicJob(job), graph: graph?.generation?.mode === 'extractive_fallback' ? null : publicClaimGraph(graph) });
   } catch (error) {
     console.error('GET argument-map job:', error.message);
     res.status(500).json({ error: 'Unable to load Argument Map status. Please retry.' });

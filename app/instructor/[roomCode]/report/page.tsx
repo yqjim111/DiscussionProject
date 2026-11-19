@@ -6,12 +6,17 @@ import Link from 'next/link';
 import ThematicAnalysis, { type ThematicData } from '@/components/ThematicAnalysis';
 import { categories } from '@/lib/argumentMapView';
 import { renderMapSvg, reportMarkdown, zipFiles } from '@/lib/reportExport';
+import { overallMapSvg } from '@/lib/overallMapView';
+import { claimReportHtml, claimReportMarkdown, claimMapsHtml, supportMapSvg } from '@/lib/claimReportExport';
+import ClaimReportView from '@/components/ClaimReportView';
 
 type Source = { group_id: string | null; speaker_id: string | null; original_quote: string };
 type MapNode = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string | null; sources: Source[] };
 type MapEdge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: string; justification: string };
 type MapData = { nodes: MapNode[]; edges: MapEdge[]; generation?: { mode: string; warning: string } };
 type Report = {
+  schemaVersion?: number;
+  claimAnalysis?: unknown;
   room: {
     code: string;
     instructor_name: string | null;
@@ -20,7 +25,9 @@ type Report = {
     duration_minutes: number | null;
     created_at: string;
   };
-  groups: { id: string; name: string; members: string[]; transcript: string; manualPoints?: { id: string; text: string }[] }[];
+  groups: { id: string; name: string; members: string[]; transcript: string; cleanedTranscript?: string;
+    cleanup?: { status: string; review_notes: { original_excerpt: string; issue: string }[] };
+    manualPoints?: { id: string; text: string }[] }[];
   overallSummary: string | null;
   contentAnalysis: {
     statements: { statement_id: string; statement: string; position: string | null; sources: { group_id: string; original_quote: string }[] }[];
@@ -95,6 +102,14 @@ export default function SessionReportPage() {
   }, [report?.argumentMap]);
 
   function exportMarkdown() {
+    if (report?.claimAnalysis) {
+      const files = { 'report.md': claimReportMarkdown(report), 'report.html': claimReportHtml(report),
+        'argument-map.svg': supportMapSvg(report), 'overall-argument-map.svg': overallMapSvg(report), 'argument-maps.html': claimMapsHtml(report), 'report.json': JSON.stringify(report, null, 2) };
+      const archive = zipFiles(files);
+      const url = URL.createObjectURL(new Blob([archive.buffer as ArrayBuffer], { type: 'application/zip' }));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'discussion-report-' + roomCode + '.zip'; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000); return;
+    }
     if (!report?.argumentMap || !mapSvg) return;
     const files: Record<string, string> = { 'report.md': reportMarkdown(report), 'argument-map.svg': mapSvg };
     if (articleRef.current) {
@@ -130,7 +145,7 @@ export default function SessionReportPage() {
   const statements = report?.contentAnalysis?.statements || [];
   function sourceNames(sources: { group_id: string | null }[]) {
     const ids = new Set(sources.map(source => source.group_id));
-    return report?.groups.filter(group => ids.has(group.id)).map(group => group.name).join(', ') || 'Unknown group';
+    return report?.groups.map((group, i) => ({ ...group, label: 'G' + (i + 1) + ' · ' + group.name })).filter(group => ids.has(group.id)).map(group => group.label).join(', ') || 'Unknown group';
   }
 
   return (
@@ -141,10 +156,10 @@ export default function SessionReportPage() {
           className="rounded-xl border border-indigo-600 text-indigo-700 disabled:opacity-40 font-semibold px-6 py-3">
           {generating ? 'Generating report…' : report?.overallSummary && report?.thematicAnalysis?.status === 'completed' ? 'Refresh report' : 'Generate Report'}
         </button>
-        <button onClick={exportMarkdown} disabled={!mapSvg || generating}
+        <button onClick={exportMarkdown} disabled={(!mapSvg && !report?.claimAnalysis) || generating}
           className="rounded-xl border border-indigo-600 text-indigo-700 disabled:opacity-40 font-semibold px-6 py-3">Export Markdown ZIP</button>
       </div>
-      <p className="no-print max-w-5xl mx-auto px-5 pb-4 text-sm text-slate-600">Generate Report creates a shared Argument Map when needed, or reuses the saved map. Markdown exports use the same statements and graph, with an HTML copy of the page formatting.</p>
+      <p className="no-print max-w-5xl mx-auto px-5 pb-4 text-sm text-slate-600">Claims are grouped into helpful and unhelpful AI themes and ranked by distinct group mentions. Expand claims and evidence to inspect their original transcripts.</p>
       {report?.stale && <p role="status" className="no-print max-w-5xl mx-auto px-5 pb-4 text-amber-700">Discussion data has changed since the saved Argument Map. Regenerate it from the Argument Map page to update this report. Exports keep the saved map and its transcript snapshot.</p>}
       {report && !map && <p className="no-print max-w-5xl mx-auto px-5 pb-4"><Link className="text-indigo-700 underline" href={'/instructor/' + roomCode + '/argument-map'}>Open Argument Map</Link></p>}
       {generating && <p role="status" className="no-print max-w-5xl mx-auto px-5 pb-4 text-indigo-700">{report?.job?.stage || 'Queueing generation…'} You can leave this page; generation continues in the background. The same map will appear on the Argument Map page.</p>}
@@ -152,7 +167,7 @@ export default function SessionReportPage() {
       {map && report?.sourceSnapshotAvailable === false && <p role="status" className="no-print max-w-5xl mx-auto px-5 pb-4 text-amber-700">This older map has no complete saved input snapshot. The appendix shows currently saved transcripts; regenerate the map to capture a matching snapshot.</p>}
       {loading && <p className="max-w-5xl mx-auto px-5">Loading saved report…</p>}
       {error && <p role="alert" className="max-w-5xl mx-auto px-5 text-red-700">{error}</p>}
-      {report && (
+      {report?.claimAnalysis ? <ClaimReportView report={report} /> : report && (
         <article ref={articleRef} className="report-sheet max-w-5xl mx-auto bg-white shadow-sm px-8 md:px-12 py-10 mb-10">
           <div className="border-b-2 border-indigo-600 pb-5 mb-7">
             <p className="uppercase tracking-[0.2em] text-xs text-indigo-700 font-semibold">ClassDiscuss · Session Report</p>
@@ -192,6 +207,7 @@ export default function SessionReportPage() {
               statements.length ? <ol className="space-y-4 text-sm">
                 {statements.map((statement, index) => <li key={statement.statement_id} className="report-entry">
                   <p><strong>Statement {index + 1}.</strong> {statement.statement} <span className="font-semibold text-indigo-800">({sourceNames(statement.sources)})</span></p>
+                  <details className="mt-2"><summary className="cursor-pointer text-indigo-700">Original evidence</summary>{statement.sources.map((source, i) => <blockquote key={i} className="whitespace-pre-wrap border-l-2 pl-3 my-2">{source.original_quote}</blockquote>)}</details>
                 </li>)}
               </ol> : <p className="text-sm italic text-slate-500">No statements in the saved map.</p>
             ) : <p className="text-sm italic text-slate-500">Select Generate Report or generate an Argument Map to populate these statements.</p>}
@@ -226,7 +242,11 @@ export default function SessionReportPage() {
             {report.groups.map((group, index) => <div key={group.id} className="transcript-group mb-8">
               <h3 className="text-lg font-bold mb-2">Group {index + 1}: {group.name}</h3>
               <p className="text-sm mb-4"><strong>Members:</strong> {group.members?.length ? group.members.join(', ') : 'Not provided'}</p>
-              <div className="transcript-text whitespace-normal break-words text-sm leading-7">{group.transcript || 'No transcription recorded for this group.'}</div>
+              <h4 className="font-semibold text-sm mb-2">Original Transcript</h4>
+              <div className="transcript-text whitespace-pre-wrap break-words text-sm leading-7">{group.transcript || 'No transcription recorded for this group.'}</div>
+              <h4 className="font-semibold text-sm mt-5 mb-2">Cleaned Transcript</h4>
+              <div className="cleaned-transcript-text whitespace-pre-wrap break-words text-sm leading-7">{group.cleanup?.status === 'completed' ? group.cleanedTranscript || (group.transcript.trim() ? 'No text remains after conservative cleanup.' : 'No transcript available to clean.') : 'Not yet cleaned. Generate Report to run AI cleanup.'}</div>
+              {!!group.cleanup?.review_notes?.length && <details className="mt-3 text-sm"><summary className="cursor-pointer">Cleanup review notes</summary>{group.cleanup.review_notes.map((note, i) => <div key={i} className="mt-2"><blockquote className="whitespace-pre-wrap">{note.original_excerpt}</blockquote><p>{note.issue}</p></div>)}</details>}
               {group.manualPoints?.some(p => p.text.trim()) && <div className="mt-4"><h4 className="font-semibold text-sm mb-2">Student-written Contributions</h4><ul className="space-y-2 text-sm">{group.manualPoints.filter(p => p.text.trim()).map(p => <li key={p.id} className="whitespace-pre-wrap break-words">• {p.text}</li>)}</ul></div>}
             </div>)}
             {!report.groups.length && <p className="text-sm text-slate-500">No groups recorded.</p>}

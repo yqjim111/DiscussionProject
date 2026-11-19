@@ -81,6 +81,7 @@ mock('../db/pool', { query: async (sql, args = []) => {
       if (job.input.thematicRequested && !args[3]) return { rows: [] };
       job.status = 'succeeded'; job.result = JSON.parse(args[0]);
     }
+    else if (sql.includes('jsonb_set')) job.input.pipelineCheckpoints = JSON.parse(args[0]);
     else if (sql.includes('SET result =')) job.result = JSON.parse(args[0]);
     else if (sql.includes("SET status = 'failed'")) { job.status = 'failed'; job.error = args[0]; }
     else job.stage = args[0];
@@ -133,29 +134,27 @@ class FakeOpenAI {
       const name = input.response_format.json_schema.name;
       if (name.startsWith('thematic_')) {
         if (failThematic) throw Object.assign(new Error('Test thematic quota failure'), { status: 429 });
-        const data = JSON.parse(input.messages[1].content);
         if (thematicGate) await thematicGate;
-        const result = name === 'thematic_codes' ? { codes: data.original_sources.map(s => ({ label: 'Source-grounded meaning', meaning: s.original_quote, source_ids: [s.source_id] })) } : name === 'thematic_review' ? data.candidate : {
-          themes: [{ theme_id: 'T1', name: 'A context-grounded pattern', central_concept: 'Shared meaning', definition: 'Pattern in original discussion', inclusion: 'Relevant meanings', exclusion: 'Unrelated meanings', qualifications: 'Interpretive draft', topic_relevance: 'ON_TOPIC', code_ids: data.codes.map(c => c.code_id) }],
-          axes: [], unassigned_code_ids: [], alternative_interpretations: [], limitations: ['No supported bipolar dimension in this fixture'], review_questions: ['Check these meanings against the original text.'],
-        };
-        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
-      }
-      if (input.response_format.json_schema.name === 'report_overall_summary') {
+      } else if (name === 'report_overall_summary') {
         if (summaryGate) await summaryGate;
         if (failReport) throw Object.assign(new Error('Test quota failure'), { status: 429 });
-        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ overall_summary: 'High-level classroom synthesis.' }) } }] };
-      }
-      if (aiGate) await aiGate;
-      aiAttempts++;
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(
-        { nodes: [{ node_id: 'N1', normalized_statement: 'A grounded claim', primary_type: 'CLAIM', topic_position: 'NEUTRAL', source_ids: [aiAttempts === 1 ? 'UNKNOWN' : 'Q1'] }], edges: [] }
-      ) } }] };
+      } else if (aiGate) await aiGate;
+      const result = require('./helpers/analysisFixture').responseFor(input);
+      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
+
     } } };
     this.audio = { transcriptions: { create: async () => { transcribeCalls++; return { text: 'Recorded speech.' }; } } };
   }
 }
 mock('openai', { OpenAI: FakeOpenAI, default: FakeOpenAI, toFile: async value => value });
+
+// Keep the legacy graph fixture for generic durable-job/cache regression tests.
+// The v3 pipeline, censoring, frequency and four-section report have their own tests.
+mock('../services/claimReportAnalysis', {
+  METHOD_VERSION: 'cleaned-discussion-v2',
+  analyzeClaimReport: input => require('../services/discussionAnalysis').analyzeDiscussion(input),
+  publicClaimGraph: graph => graph,
+});
 
 const { originalQuote, validateGraph } = require('../services/argumentMap');
 const { server, io } = require('../index');
@@ -336,14 +335,15 @@ test('Argument Map runs detached, deduplicates pending requests and restores the
   const restored = await (await fetch(base + '/api/rooms/' + room.code + '/argument-map', { headers: { Cookie: cookie } })).json();
   assert.equal(restored.job.status, 'succeeded');
   const graph = restored.graph;
-  assert.equal(aiInputs.length, 2);
-  const input = JSON.parse(aiInputs[0].messages[1].content);
+  assert.ok(aiInputs.some(i => i.response_format.json_schema.name === 'transcript_cleanup'));
+  assert.ok(aiInputs.some(i => i.response_format.json_schema.name === 'argument_relations'));
+  const input = { original_sources: aiInputs.filter(i => i.response_format.json_schema.name === 'group_content').flatMap(i => JSON.parse(i.messages[1].content).original_sources) };
   assert.match(JSON.stringify(input.original_sources), /Original first group speech/);
   assert.match(JSON.stringify(input.original_sources), /Original second group speech/);
   assert.ok(input.original_sources.some(s => s.source_kind === 'manual' && s.original_quote === 'A saved student-written viewpoint.'));
   assert.equal(graph.source_snapshot.groups[1].manualPoints[0].text, 'A saved student-written viewpoint.');
   assert.doesNotMatch(JSON.stringify(input.original_sources), /SUMMARY MUST NOT BE INPUT/);
-  assert.equal(input.teacher_topic, 'New topic');
+  assert.equal('teacher_topic' in input, false);
   assert.equal(graph.input.groups.length, 2);
   assert.equal(graph.input.source, 'original_transcripts');
   assert.equal(graph.nodes[0].sources[0].original_quote, 'Original first group speech.');
@@ -381,7 +381,7 @@ test('report reuses the authoritative map, its four categories and exact source 
   assert.deepEqual(report.argumentMap.nodes, job.result.nodes);
   assert.deepEqual(report.argumentMap.edges, job.result.edges);
   assert.equal(report.thematicAnalysis.status, 'completed');
-  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review', 'report_overall_summary'], 'Complete missing thematic analysis and summary without new graph extraction');
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_codes', 'thematic_synthesis', 'thematic_review', 'report_overall_summary'], 'Complete missing thematic analysis and summary without new graph extraction');
   assert.equal(aiInputs.at(-1).response_format.json_schema.name, 'report_overall_summary');
   assert.equal(report.groups[0].transcript, 'Original first group speech.');
   assert.deepEqual(report.groups[0].members, ['A']);
@@ -413,12 +413,14 @@ test('reports with an existing summary fill missing thematic analysis and retry 
   delete graph.thematic_analysis;
   await require('../services/reportStore').finishReport(room.code, graph, false, graph.source_snapshot);
   const nodes = structuredClone(graph.nodes);
+  jobs.get(room.code).input.pipelineCheckpoints = {};
   failThematic = true;
   const calls = aiInputs.length;
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 202);
   await completeJobs();
-  assert.equal(jobs.get(room.code).result.thematic_analysis.status, 'unavailable');
-  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes']);
+  assert.equal(jobs.get(room.code).status, 'failed');
+  assert.equal(jobs.get(room.code).result.thematic_analysis, undefined);
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_codes']);
   failThematic = false;
   const retryCalls = aiInputs.length;
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 202);
@@ -427,7 +429,7 @@ test('reports with an existing summary fill missing thematic analysis and retry 
   assert.equal(report.thematicAnalysis.status, 'completed');
   assert.equal(report.overallSummary, 'High-level classroom synthesis.');
   assert.deepEqual(report.argumentMap.nodes, nodes);
-  assert.deepEqual(aiInputs.slice(retryCalls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review']);
+  assert.deepEqual(aiInputs.slice(retryCalls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_codes', 'thematic_synthesis', 'thematic_review']);
   const completedCalls = aiInputs.length;
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 200);
   assert.equal(aiInputs.length, completedCalls);
@@ -477,14 +479,17 @@ test('report-first generation and simultaneous map requests share one durable an
   assert.equal(complete.overallSummary, 'High-level classroom synthesis.');
   assert.deepEqual(complete.argumentMap.nodes, map.graph.nodes);
   assert.equal(complete.thematicAnalysis.status, 'completed');
-  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['indexed_argument_map', 'thematic_codes', 'thematic_synthesis', 'thematic_review', 'report_overall_summary']);
+  const stages = aiInputs.slice(calls).map(i => i.response_format.json_schema.name);
+  assert.equal(stages[0], 'transcript_cleanup');
+  assert.ok(stages.indexOf('argument_relations') >= 0 && stages.indexOf('argument_relations') < stages.indexOf('thematic_codes'));
+  assert.equal(stages.at(-1), 'report_overall_summary');
   const count = aiInputs.length;
   assert.equal((await post('/api/rooms/' + room.code + '/report/generate', {}, true)).status, 200);
   assert.equal(aiInputs.length, count, 'Completed results must be reused');
   const regenerate = await (await post('/api/rooms/' + room.code + '/argument-map', {}, true)).json();
   assert.notEqual(regenerate.job.id, pending.job.id);
   await completeJobs();
-  assert.equal(aiInputs.length, count + 1, 'Only explicit map regeneration reruns analysis');
+  assert.equal(aiInputs.length, count, 'Unchanged successful stages are restored from durable checkpoints');
 });
 
 test('a report request joins an existing map job, and persisted report intent recovers after restart', async () => {
@@ -524,7 +529,7 @@ test('thematic analysis reuses saved original input and leaves graph nodes and r
   assert.deepEqual(result.nodes, previous.nodes); assert.deepEqual(result.edges, previous.edges);
   assert.equal(result.thematic_analysis.status, 'completed');
   assert.ok(result.thematic_analysis.themes[0].sources.length);
-  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_synthesis', 'thematic_review']);
+  assert.deepEqual(aiInputs.slice(calls).map(i => i.response_format.json_schema.name), ['thematic_codes', 'thematic_codes', 'thematic_synthesis', 'thematic_review']);
   const report = await (await fetch(base + '/api/rooms/' + room.code + '/report', { headers: { Cookie: cookie } })).json();
   assert.deepEqual(report.thematicAnalysis, result.thematic_analysis);
   failThematic = true;
@@ -534,7 +539,8 @@ test('thematic analysis reuses saved original input and leaves graph nodes and r
   assert.deepEqual(preserved.nodes, previous.nodes);
   assert.deepEqual(preserved.thematic_analysis.themes, result.thematic_analysis.themes);
   assert.equal(preserved.thematic_analysis.status, 'completed');
-  assert.ok(preserved.thematic_analysis.warning && preserved.thematic_analysis.last_attempt_at, 'A failed retry preserves the previous reviewed draft and exposes its warning');
+  assert.equal(jobs.get(room.code).status, 'failed');
+  assert.ok(jobs.get(room.code).error, 'Failed retry exposes job failure and preserves the previous reviewed draft');
 });
 
 test('content analysis rejects fabricated provenance, duplicated statements and forced positions without a proposition', () => {

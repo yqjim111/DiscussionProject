@@ -29,3 +29,9 @@ npm-debug.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Isolated browser profiles used for local report rendering checks
+artifacts/qa-browser-profile*/
+
+# Local discussion data, analysis checkpoints and generated student reports
+artifacts/

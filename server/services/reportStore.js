@@ -19,9 +19,9 @@ async function finishReport(code, graph, refreshSummary, sourceInput) {
   const client = await redis.getClient();
   const saved = await client.get('room:' + code + ':reportSnapshot');
   const report = reportFromMap(session, graph, graph.source_snapshot || sourceInput, saved ? JSON.parse(saved) : null);
-  if (!report.overallSummary || refreshSummary) {
+  if (!report.claimAnalysis && (!report.overallSummary || refreshSummary)) {
     try {
-      report.overallSummary = await summarizeMap(report.room, graph.nodes);
+      report.overallSummary = await summarizeMap(report.room, graph.nodes, { thematic: graph.thematic_analysis });
       report.summaryWarning = '';
     } catch (error) {
       console.warn('Report summary:', error.status || error.message);

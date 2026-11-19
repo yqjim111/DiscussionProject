@@ -7,8 +7,8 @@ const { textModelOptions } = require('./textModel');
 
 function snapshotHash(room, groups) {
   return crypto.createHash('sha256').update(JSON.stringify({
-    topic: room.teacher_topic, instructions: room.discussion_instructions,
-    instructor: room.instructor_name,
+    // Task metadata may change between snowball rounds; only original evidence
+    // and its attribution determine whether the current analysis is stale.
     groups: groups.map(g => ({ id: g.id, name: g.name, members: g.members, transcript: g.transcript, manualPoints: g.manualPoints || [] }))
   })).digest('hex');
 }

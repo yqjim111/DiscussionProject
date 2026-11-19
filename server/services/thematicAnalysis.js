@@ -1,14 +1,14 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { OpenAI } = require('openai');
-const { indexSources } = require('./argumentMapIndexed');
-const { textModelOptions, TEXT_MODEL } = require('./textModel');
-const METHOD_VERSION = 'thematic-draft-v1';
+const { createAnalysisRequest, mapGroups } = require('./analysisRequest');
+const { prepareGroups, indexSources, resolveQuote } = require('./transcriptPreparation');
+const { TEXT_MODEL } = require('./textModel');
+const METHOD_VERSION = 'cleaned-thematic-v2';
 const strings = { type: 'array', items: { type: 'string' } };
 const object = properties => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
 const text = { type: 'string' };
-const codingSchema = object({ codes: { type: 'array', items: object({ label: text, meaning: text, source_ids: strings }) } });
+const codingSchema = object({ codes: { type: 'array', items: object({ label: text, meaning: text, quotes: { type: 'array', items: object({ source_id: text, original_quote: text }) } }) } });
 const pole = object({ label: text, definition: text, code_ids: strings });
 const synthesisSchema = object({
   themes: { type: 'array', items: object({ theme_id: text, name: text, central_concept: text, definition: text, inclusion: text, exclusion: text, qualifications: text, topic_relevance: { type: 'string', enum: ['ON_TOPIC', 'OFF_TOPIC', 'MIXED'] }, code_ids: strings }) },
@@ -47,66 +47,56 @@ function materializeAnalysis(candidate, codes, sources) {
     return { ...axis, left_pole: { ...axis.left_pole, ...left }, right_pole: { ...axis.right_pole, ...right } };
   });
   if (!Array.isArray(candidate.unassigned_code_ids)) throw new Error('Missing code coverage');
-  candidate.unassigned_code_ids.forEach(id => { if (!byCode.has(id)) throw new Error('Unknown unassigned code'); covered.add(id); });
-  if (codes.some(c => !covered.has(c.code_id))) throw new Error('Meaningful codes must be themed or explicitly unassigned');
+  // Coverage is bookkeeping, not an interpretive model decision. Compute the
+  // actual set difference so no minority code disappears and invented inventory
+  // IDs cannot become evidence. Theme/axis evidence IDs above remain strict.
+  candidate.unassigned_code_ids = codes.filter(c => !covered.has(c.code_id)).map(c => c.code_id);
   for (const key of ['alternative_interpretations', 'limitations', 'review_questions']) if (!Array.isArray(candidate[key]) || candidate[key].some(s => typeof s !== 'string')) throw new Error('Invalid review notes');
-  return { ...candidate, themes, axes, codes: codes.map(code => ({ ...code, ...evidence([code.code_id]) })) };
+  return { ...candidate, themes, axes, coverage_method: 'server_set_difference', codes: codes.map(code => ({ ...code, ...evidence([code.code_id]) })) };
 }
 
-async function analyzeThematic({ topic, instructions, groups, onProgress = async () => {} }) {
-  const sources = indexSources(groups);
+async function analyzeThematic({ groups, onProgress = async () => {}, checkpoints, onCheckpoint, request: suppliedRequest }) {
+  const request = suppliedRequest || createAnalysisRequest({ checkpoints, onCheckpoint });
+  const prepared = await prepareGroups(groups, { request, onProgress });
+  const originals = indexSources(prepared), sources = [], codes = [];
   const base = { method_version: METHOD_VERSION, model: TEXT_MODEL, review_status: 'AI_DRAFT', generated_at: new Date().toISOString() };
   const empty = { codes: [], themes: [], axes: [], unassigned_code_ids: [], alternative_interpretations: [], limitations: [], review_questions: [] };
-  if (!sources.length) return { ...base, ...empty, status: 'completed', limitations: ['No meaningful original contribution text is available.'] };
-  if (!process.env.OPENAI_API_KEY) return { ...base, ...empty, status: 'unavailable', warning: 'The AI API key is not configured. The saved Argument Map is unchanged.' };
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90000, maxRetries: 1 });
-  async function request(name, schema, system, data, validate) {
-    const messages = [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(data) }];
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await client.chat.completions.create({ ...textModelOptions(16000), temperature: 0,
-        response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } }, messages });
-      const choice = response.choices[0];
-      try {
-        if (choice?.finish_reason !== 'stop' || choice.message.refusal || !choice.message.content) throw new Error('Incomplete thematic output');
-        const result = JSON.parse(choice.message.content); validate(result); return result;
-      } catch (error) {
-        if (attempt === 1) throw error;
-        if (choice?.message?.content) messages.push({ role: 'assistant', content: choice.message.content });
-        messages.push({ role: 'user', content: 'Validation failed: ' + error.message + '. Correct the complete result using only supplied IDs; an empty axes array is valid. Never invent evidence or omit codes to evade checks.' });
+  const codedGroups = await mapGroups(prepared, async (group, i) => {
+    const available = originals.filter(s => s.group_id === String(group.id));
+    if (!available.length) return null;
+    await onProgress('Thematic coding of complete group · ' + (i + 1) + '/' + prepared.length + ' · ' + group.name);
+    const data = { group_id: String(group.id), cleaned_transcript: group.cleanedTranscript, original_sources: available };
+    const validate = result => {
+      if (!Array.isArray(result?.codes)) throw new Error('Missing codes');
+      for (const code of result.codes) {
+        if (!code.label?.trim() || !code.meaning?.trim() || !code.quotes?.length) throw new Error('Every code needs meaning and exact evidence');
+        code.quotes.forEach(q => resolveQuote(q, available));
       }
+    };
+    const result = await request('thematic_codes', codingSchema, prompt('coding'), data, validate);
+    return { group, available, result };
+  });
+  for (const { group, available, result } of codedGroups.filter(Boolean)) {
+    for (const code of result.codes) {
+      const sourceIds = [];
+      for (const quote of code.quotes) {
+        const resolved = resolveQuote(quote, available);
+        let record = sources.find(s => s.group_id === resolved.group_id && s.original_quote === resolved.original_quote && s.source_kind === resolved.source_kind);
+        if (!record) { record = { ...resolved, source_id: 'TQ' + (sources.length + 1), group_name: group.name }; sources.push(record); }
+        sourceIds.push(record.source_id);
+      }
+      codes.push({ code_id: 'C' + (codes.length + 1), label: code.label, meaning: code.meaning, source_ids: [...new Set(sourceIds)] });
     }
   }
-  try {
-    // Batches cover ALL indexed raw/typed sources. No group, minority contribution
-    // or tail of a long transcript is discarded to fit a fixed theme count.
-    const batches = []; let batch = [], size = 0;
-    for (const source of sources) {
-      const length = JSON.stringify(source).length;
-      if (size + length > 24000 && batch.length) { batches.push(batch); batch = []; size = 0; }
-      batch.push(source); size += length;
-    }
-    if (batch.length) batches.push(batch);
-    const codes = [];
-    for (let i = 0; i < batches.length; i++) {
-      await onProgress('Thematic coding · batch ' + (i + 1) + '/' + batches.length);
-      const available = new Map(batches[i].map(s => [s.source_id, s]));
-      const result = await request('thematic_codes', codingSchema, prompt('coding'), { teacher_topic: topic, discussion_instructions: instructions, original_sources: batches[i] }, result => {
-        if (!Array.isArray(result.codes)) throw new Error('Missing codes');
-        for (const code of result.codes) { if (!code.label?.trim() || !code.meaning?.trim()) throw new Error('Empty code'); select(code.source_ids, available, 'source'); }
-      });
-      for (const code of result.codes) codes.push({ ...code, source_ids: [...new Set(code.source_ids)], code_id: 'C' + (codes.length + 1) });
-    }
-    if (!codes.length) return { ...base, ...empty, status: 'completed', limitations: ['No substantive codable meanings were identified; review the original contributions.'] };
-    const used = new Set(codes.flatMap(c => c.source_ids));
-    const data = { teacher_topic: topic, discussion_instructions: instructions, codes, original_sources: sources.filter(s => used.has(s.source_id)) };
-    await onProgress('Developing themes and supported two-pole axes');
-    const candidate = await request('thematic_synthesis', synthesisSchema, prompt('synthesis'), data, result => materializeAnalysis(result, codes, sources));
-    await onProgress('Reviewing themes, minority evidence and axis poles');
-    const reviewed = await request('thematic_review', synthesisSchema, prompt('review'), { ...data, candidate }, result => materializeAnalysis(result, codes, sources));
-    return { ...base, ...materializeAnalysis(reviewed, codes, sources), status: 'completed', input: { source_count: sources.length, groups: [...new Set(sources.map(s => s.group_id))] } };
-  } catch (error) {
-    console.warn('Thematic analysis:', error.status || error.message);
-    return { ...base, ...empty, status: 'unavailable', warning: 'Thematic analysis could not complete or pass evidence checks. Retry this analysis; the saved Argument Map and original contributions are preserved.' };
-  }
+  if (!codes.length) return { ...base, ...empty, status: 'completed', limitations: ['No substantive codable meanings were identified.'] };
+  // Synthesis gets the complete codebook with selected original evidence, not
+  // thousands of mechanical fragments or another copy of every full transcript.
+  const data = { codes, original_sources: sources };
+  await onProgress('Developing evidence-grounded themes across all groups');
+  const candidate = await request('thematic_synthesis', synthesisSchema, prompt('synthesis'), data, r => materializeAnalysis(r, codes, sources), 24000);
+  await onProgress('Reviewing themes, conditions and negative cases');
+  const reviewed = await request('thematic_review', synthesisSchema, prompt('review'), { ...data, candidate }, r => materializeAnalysis(r, codes, sources), 24000);
+  return { ...base, ...materializeAnalysis(reviewed, codes, sources), status: 'completed', input: { source_count: sources.length, groups: prepared.map(g => String(g.id)) } };
 }
+
 module.exports = { analyzeThematic, materializeAnalysis, METHOD_VERSION };

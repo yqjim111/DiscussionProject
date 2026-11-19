@@ -1,6 +1,6 @@
 # ClassDiscuss
 
-Classroom discussion transcription and analysis. Whisper transcribes complete audio segments while students keep recording. Students explicitly select Generate AI Summary to summarize their saved original transcripts with OpenAI. Instructors can generate an Argument Map from every group's original transcript.
+Classroom discussion transcription and analysis. Whisper transcribes complete audio segments while students keep recording. Students explicitly select Generate AI Summary to summarize their saved original transcripts with OpenAI. Instructors select Generate Report to clean each group's transcript and automatically discover discussion-specific sections, themes, claims, supporting evidence, an interactive argument map and grounded tension axes. See the [Generate Report pipeline](docs/discussion-report-pipeline.md).
 
 ---
 

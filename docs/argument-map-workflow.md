@@ -1,5 +1,7 @@
 # Argument Map execution workflow
 
+**Superseded:** The current whole-group cleanup and staged analysis workflow is documented in [cleaned-discussion-pipeline.md](cleaned-discussion-pipeline.md). The excerpt indexing and fallback behavior below describes the previous implementation and is no longer executed.
+
 1. POST `/api/rooms/:code/argument-map` captures every group's original transcript and saved student-written contributions, including offline groups, and returns HTTP 202 with a job ID. No AI summary is used as input. Each source retains its recording/manual origin; the source snapshot also retains group members and full typed text.
 2. PostgreSQL stores the queued job and its input. A backend worker claims it with a lease; the browser can navigate away or close. Duplicate clicks reuse the pending job. The startup worker recovers queued jobs and expired running leases after restart.
 3. Original texts are indexed as exact excerpts Q1, Q2, etc. Each excerpt retains its group ID and original wording. Long spans are split without silently dropping text.

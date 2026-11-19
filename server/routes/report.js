@@ -5,6 +5,7 @@ const jobs = require('../services/argumentMapJobs');
 const { requireInstructor } = require('../services/instructorAuth');
 const { reportFromMap } = require('../services/reportFromMap');
 const { readSession } = require('../services/reportStore');
+const { METHOD_VERSION } = require('../services/claimReportAnalysis');
 
 async function readReport(code) {
   const current = await readSession(code);
@@ -47,8 +48,9 @@ router.post('/:code/report/generate', async (req, res) => {
       const report = await readReport(req.params.code);
       if (!report) return res.status(404).json({ error: 'Room not found' });
       const refreshSummary = req.body?.refreshSummary === true;
-      const needsThematic = report.thematicAnalysis?.status !== 'completed';
-      if (report.overallSummary && !needsThematic && !refreshSummary && !report.reportPending && !['queued', 'running'].includes(report.job?.status)) {
+      const reusable = report.argumentMap?.generation?.method_version === METHOD_VERSION && (!report.claimAnalysis || !report.stale);
+      const needsThematic = !reusable || report.thematicAnalysis?.status !== 'completed';
+      if (reusable && report.overallSummary && !needsThematic && !refreshSummary && !report.reportPending && !['queued', 'running'].includes(report.job?.status)) {
         return res.json(report);
       }
       let job;
@@ -56,12 +58,16 @@ router.post('/:code/report/generate', async (req, res) => {
         job = await jobs.requestReport(req.params.code, refreshSummary, needsThematic);
         if (!job) continue;
       } else {
-        const source = report.argumentMap?.source_snapshot || {
-          topic: report.room.teacher_topic || '', instructions: report.room.discussion_instructions || '', groups: report.groups,
+        const current = await readSession(req.params.code);
+        const previous = await jobs.getJob(req.params.code);
+        const privateGraph = previous?.result || report.argumentMap;
+        const source = (reusable && privateGraph?.source_snapshot) || {
+          topic: current.room.teacher_topic || '', instructions: current.room.discussion_instructions || '', groups: current.groups,
         };
         job = await jobs.enqueue(req.params.code, { ...source,
           reportRequested: true, refreshSummary, thematicRequested: needsThematic,
-          reuseSavedMap: Boolean(report.argumentMap), reuseGraph: report.argumentMap,
+          reuseSavedMap: reusable, reuseGraph: reusable ? privateGraph : null,
+          pipelineCheckpoints: previous?.input?.pipelineCheckpoints || {},
         });
         // enqueue may have joined a map job started concurrently from the map page.
         job = await jobs.requestReport(req.params.code, refreshSummary, needsThematic);

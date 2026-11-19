@@ -27,6 +27,8 @@ export default function ThematicAnalysis({ analysis, onGenerate, busy = false, s
         <div className="space-y-5">{analysis.themes.map(theme => <article key={theme.theme_id} className="space-y-2">
           <h4 className="font-semibold">{theme.name}</h4>
           <p className="leading-relaxed">{theme.definition}</p>
+          <p className="text-sm"><strong>Conditions and boundaries:</strong> {theme.qualifications}</p>
+          <details className="text-sm"><summary className="cursor-pointer text-indigo-700">Original evidence</summary>{theme.sources.map((source, i) => <blockquote key={i} className="whitespace-pre-wrap border-l-2 pl-3 my-2"><strong>{source.group_name || source.group_id}</strong><br />{source.original_quote}</blockquote>)}</details>
         </article>)}</div>
         <h3 className="font-bold">Axes</h3>
         {!analysis.axes.length && <p>No axes identified.</p>}

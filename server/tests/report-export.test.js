@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { renderMapSvg, reportMarkdown, zipFiles } = require('../../lib/reportExport');
+const { renderMapSvg, reportMarkdown, reportHtml, zipFiles } = require('../../lib/reportExport');
 
 test('Markdown preserves page section order, emphasis, multiline fields and concise theme/axis descriptions', () => {
   const source = { source_id: 'Q1', group_id: 'g1', group_name: 'One', source_kind: 'manual', original_quote: 'Keep authorship.' };
@@ -46,7 +46,7 @@ test('large vector exports include all nodes, edges and full text; ZIP opens wit
   const svg = renderMapSvg(graph), markdown = reportMarkdown(report);
   assert.doesNotMatch(svg, /<script>|<image|<foreignObject|onclick=/i);
   assert.doesNotMatch(markdown, /Argument Relationships|Graph Evidence|Reference proposition/);
-  assert.match(markdown, /Original first chunk\. Second chunk\. ç¬¬ä¸‰æ®µã€‚/);
+  assert.match(markdown, /Original first chunk\.\s+Second chunk\.\s+/);
   const archive = zipFiles({ 'report.md': markdown, 'argument-map.svg': svg });
   const parsed = spawnSync('python', ['-c', `
 import sys,io,zipfile,json,xml.etree.ElementTree as E
@@ -68,4 +68,14 @@ print(json.dumps({'files':z.namelist(),'nodes':len(nodes),'edges':len(edges),'te
   assert.deepEqual(result.files, ['report.md', 'argument-map.svg']);
   assert.equal(result.nodes, 305); assert.equal(result.edges, 100);
   for (let i = 0; i < graph.nodes.length; i++) assert.equal(result.text[i].replace(/\s/gu, ''), graph.nodes[i].normalized_statement.replace(/\s/gu, ''));
+});
+
+test('exports keep each original followed by its cleaned transcript and escape student HTML', () => {
+ const report = {room:{code:'520123'},overallSummary:'Summary',argumentMap:{nodes:[],edges:[]},groups:[
+  {id:'g1',name:'One',members:[],transcript:'Um, <script>alert(1)</script> First.',cleanedTranscript:'First.',cleanup:{status:'completed',review_notes:[]}},
+  {id:'g2',name:'Two',members:[],transcript:'Uh, second.',cleanedTranscript:'Second.',cleanup:{status:'completed',review_notes:[]}}
+ ]};
+ const md=reportMarkdown(report);assert.ok(md.indexOf('First.')<md.indexOf('### Group 2'));assert.ok(md.indexOf('#### Cleaned Transcript')<md.indexOf('### Group 2'));
+ const html=reportHtml(report);assert.match(html,/&lt;script&gt;alert/);assert.doesNotMatch(html,/<script>alert/);
+ const labels=[...html.matchAll(/<h4>(Original|Cleaned) Transcript<\/h4>/g)].map(m=>m[1]);assert.deepEqual(labels,['Original','Cleaned','Original','Cleaned']);
 });

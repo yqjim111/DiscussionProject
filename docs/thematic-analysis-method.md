@@ -15,7 +15,9 @@ If students explicitly say both "AI should help students develop their own draft
 
 If the only contribution is "AI makes ideation faster", it may support an efficiency code or tentative theme. It does not establish a dependency pole, an authorship axis, or a two-sided debate. "Ease of use" versus "Privacy" is also not automatically a bipolar axis: these can be separate priorities. A justified tension requires evidence of their actual tradeoff on a stated dimension.
 
-## Execution
+## Execution (previous implementation)
+
+The current implementation uses complete cleaned groups with original evidence and no topic/instruction filtering. See [cleaned-discussion-pipeline.md](cleaned-discussion-pipeline.md). The fragment-batched execution below is historical.
 
 1. **Original input:** use the saved map's full source snapshot, including all groups, recorded transcripts and saved typed contributions. AI group summaries and map sentiment labels are not primary data. Older maps need a recoverable matching source snapshot.
 2. **Coding:** index exact source spans Q1, Q2, etc.; process every span in bounded batches. Luna returns specific code labels, meanings and source IDs. The server restores verbatim evidence and source provenance; the model never copies/fabricates quotations.

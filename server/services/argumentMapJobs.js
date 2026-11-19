@@ -6,6 +6,8 @@ const { analyzeArgumentMap } = require('./argumentMap');
 const { finishReport } = require('./reportStore');
 const { analysisText } = require('./manualPoints');
 const { analyzeThematic } = require('./thematicAnalysis');
+const { createAnalysisRequest } = require('./analysisRequest');
+const { METHOD_VERSION } = require('./claimReportAnalysis');
 let working = null;
 let interval = null;
 
@@ -61,12 +63,20 @@ async function drain() {
     if (!job) return;
     try {
       const input = job.input;
-      const graph = input.reuseSavedMap ? (job.result || input.reuseGraph) : await analyzeArgumentMap({ ...input, onProgress: async stage => {
+      const checkpoints = input.pipelineCheckpoints || {};
+      const onCheckpoint = async saved => {
+        await pool.query("UPDATE argument_map_jobs SET input = jsonb_set(input, '{pipelineCheckpoints}', $1::jsonb), lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", [JSON.stringify(saved), job.id]);
+      };
+      const request = createAnalysisRequest({ checkpoints, onCheckpoint });
+      const reuseGraph = input.reuseGraph || job.result;
+      const canReuse = input.reuseSavedMap && reuseGraph?.generation?.method_version === METHOD_VERSION;
+      const graph = canReuse ? reuseGraph : await analyzeArgumentMap({ ...input, request, onProgress: async stage => {
         await pool.query("UPDATE argument_map_jobs SET stage = $1, lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
       } });
-      let payload = input.reuseSavedMap ? graph : {
-        ...graph, source_snapshot: input, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
-        input: { source: 'original_transcripts', generated_at: new Date().toISOString(), topic: input.topic, instructions: input.instructions,
+      const snapshot = { topic: input.topic || '', instructions: input.instructions || '' };
+      let payload = canReuse ? graph : {
+        ...graph, source_snapshot: { ...snapshot, groups: graph.source_groups || graph.cleaned_groups || input.groups }, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
+        input: { ...graph.input, source: 'original_transcripts', generated_at: new Date().toISOString(), topic: input.topic, instructions: input.instructions,
           groups: input.groups.map(g => ({ id: g.id, name: g.name, characters: analysisText(g).length, transcript_characters: g.transcript.length, manual_characters: (g.manualPoints || []).reduce((sum, p) => sum + p.text.length, 0) })) }
       };
       if (!payload) throw new Error('Missing saved map');
@@ -84,15 +94,13 @@ async function drain() {
       for (;;) {
         const latest = await getJob(job.room_code);
         if (!latest || latest.id !== job.id || latest.status !== 'running') break;
+        if (latest.input.thematicRequested && !thematicHandled && payload.claim_analysis) thematicHandled = true;
         if (latest.input.thematicRequested && !thematicHandled) {
           const source = payload.source_snapshot || latest.input;
-          const thematic = await analyzeThematic({ ...source, onProgress: async stage => {
+          const thematic = await analyzeThematic({ ...source, groups: payload.cleaned_groups || source.groups, request, onProgress: async stage => {
             await pool.query("UPDATE argument_map_jobs SET stage = $1, lease_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2 AND status = 'running'", [stage, job.id]);
           } });
-          const previousAnalysis = payload.thematic_analysis;
-          payload = { ...payload, thematic_analysis: thematic.status === 'unavailable' && previousAnalysis?.status === 'completed'
-            ? { ...previousAnalysis, warning: thematic.warning, last_attempt_at: thematic.generated_at }
-            : thematic };
+          payload = { ...payload, thematic_analysis: thematic };
           await pool.query("UPDATE argument_map_jobs SET result = $1::jsonb, updated_at = NOW() WHERE id = $2 AND status = 'running' RETURNING room_code", [JSON.stringify(payload), job.id]);
           try { await (await redis.getClient()).set('room:' + job.room_code + ':argumentMap', JSON.stringify(payload)); } catch (error) { console.error('Thematic cache:', error.message); }
           thematicHandled = true;
@@ -114,8 +122,10 @@ async function drain() {
         if (completed.rows.length) break;
       }
     } catch (error) {
-      console.error('Argument map background job:', error.message);
-      await pool.query("UPDATE argument_map_jobs SET status = 'failed', stage = 'Failed', error = $1, lease_until = NULL, updated_at = NOW() WHERE id = $2 AND status = 'running'", ['Unable to finish the job. Your original transcripts and previous map are preserved. Please retry.', job.id]);
+      const latest = await getJob(job.room_code);
+      const stage = error.analysis_stage || latest?.stage || 'analysis';
+      console.error('Discussion analysis failed:', { stage, status: error.status || null, type: error.name });
+      await pool.query("UPDATE argument_map_jobs SET status = 'failed', stage = $3, error = $1, lease_until = NULL, updated_at = NOW() WHERE id = $2 AND status = 'running'", ['Analysis stopped during ' + stage + '. Original transcripts, completed checkpoints and the previous valid map are preserved. Retry to resume.', job.id, 'Failed · ' + stage]);
     }
   }
 }
