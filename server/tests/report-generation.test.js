@@ -73,3 +73,18 @@ test('Generate Report upgrades old analysis, discovers section headers and retur
   await complete(); assert.equal(calls.filter(name => name === 'discussion_report_plan').length, 2);
   assert.equal(enqueues, 2);
 });
+
+test('Download transcription exports every original group without AI, cleanup or report generation', async () => {
+  const before = calls.length, count = enqueues;
+  const original = 'Original 中文\nline break\r\nA retard sentence.';
+  const saved = groups[0].transcript; groups[0].transcript = original;
+  try {
+    const response = await fetch(base.replace('/report', '/transcription'));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-disposition'), /attachment; filename="discussion-transcription-123456.txt"/);
+    const text = await response.text(); assert.ok(text.includes(original));
+    assert.match(text, /G1 · One · Student 1/); assert.match(text, /G2 · Two · Student 2/);
+    assert.ok(text.includes(groups[1].transcript));
+    assert.equal(calls.length, before); assert.equal(enqueues, count);
+  } finally { groups[0].transcript = saved; }
+});

@@ -75,7 +75,7 @@ async function drain() {
       } });
       const snapshot = { topic: input.topic || '', instructions: input.instructions || '' };
       let payload = canReuse ? graph : {
-        ...graph, source_snapshot: { ...snapshot, groups: graph.source_groups || graph.cleaned_groups || input.groups }, groups: input.groups.map(g => ({ id: g.id, name: g.name })),
+        ...graph, source_snapshot: { ...snapshot, groups: graph.source_groups || graph.cleaned_groups || input.groups }, groups: input.groups.map(g => ({ id: g.id, name: g.name, members: g.members || [] })),
         input: { ...graph.input, source: 'original_transcripts', generated_at: new Date().toISOString(), topic: input.topic, instructions: input.instructions,
           groups: input.groups.map(g => ({ id: g.id, name: g.name, characters: analysisText(g).length, transcript_characters: g.transcript.length, manual_characters: (g.manualPoints || []).reduce((sum, p) => sum + p.text.length, 0) })) }
       };
@@ -89,8 +89,9 @@ async function drain() {
         try { await (await redis.getClient()).set('room:' + job.room_code + ':argumentMap', JSON.stringify(payload)); }
         catch (error) { console.error('Map cache:', error.message); }
       }
-      let thematicHandled = false;
-      let reportHandled = false;
+      const simplified = payload.generation?.method_version?.startsWith('simple-argument-map-');
+      let thematicHandled = Boolean(simplified);
+      let reportHandled = Boolean(simplified);
       for (;;) {
         const latest = await getJob(job.room_code);
         if (!latest || latest.id !== job.id || latest.status !== 'running') break;

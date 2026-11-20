@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { getGroups, generateOverallSummary, deleteRoom, type Group } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 import GroupCard from '@/components/GroupCard';
+import DownloadTranscriptionButton from '@/components/DownloadTranscriptionButton';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import ArgumentMapLink from '@/components/ArgumentMapLink';
 import GroupDiscussionDialog from '@/components/GroupDiscussionDialog';
@@ -138,12 +139,8 @@ export default function InstructorDashboard() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <DiscussionInstructions roomCode={roomCode} editable />
-            <Link
-              href={`/instructor/${roomCode}/report?generate=1`}
-              className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm"
-            >
-              Generate report
-            </Link>
+            <DownloadTranscriptionButton roomCode={roomCode} onError={setError}
+              className="px-6 py-2.5 bg-emerald-700 text-white font-semibold rounded-xl hover:bg-emerald-800 transition-colors text-sm disabled:opacity-50" />
             <ArgumentMapLink roomCode={roomCode} />
             <button
               onClick={handleGenerateOverall}

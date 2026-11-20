@@ -8,13 +8,12 @@ import { getSocket } from '@/lib/socket';
 import DiscussionInstructions from '@/components/DiscussionInstructions';
 import cytoscape from 'cytoscape';
 import { graphElements, graphStyles, layoutGraph, fitGraph, categoryFor } from '@/lib/argumentMapView';
-import ThematicAnalysis, { type ThematicData } from '@/components/ThematicAnalysis';
 import ArgumentMapLegend from '@/components/ArgumentMapLegend';
 
 type Source = { group_id: string | null; speaker_id: string | null; timestamp: string | null; source_location: string | null; original_quote: string; source_kind?: string };
 type Node = { node_id: string; normalized_statement: string; primary_type: string; topic_position?: string; sources: Source[] };
 type Edge = { edge_id: string; source_node_id: string; target_node_id: string; relationship_type: 'SUPPORTS' | 'ATTACKS' | 'SIMILAR_TO'; evidence: { node_id: string; original_quote: string }[]; justification: string };
-type Graph = { thematic_analysis?: ThematicData; nodes: Node[]; edges: Edge[]; groups: { id: string; name: string }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
+type Graph = { thematic_analysis?: { generated_at?: string; last_attempt_at?: string }; themes?: { id: string; title: string; description: string; claim_ids: string[] }[]; nodes: Node[]; edges: Edge[]; groups: { id: string; name: string; members?: string[] }[]; generation?: { mode: string; warning: string }; input?: { generated_at: string; groups: { id: string; name: string; characters: number }[] } };
 type Job = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; stage: string; error?: string; thematic_requested?: boolean };
 declare global { interface Window { cytoscape?: (config: any) => any } }
 
@@ -93,15 +92,13 @@ export default function ArgumentMapPage() {
     const observer = new ResizeObserver(() => { instance.resize(); fitGraph(instance); });
     observer.observe(container.current);
     instance.on('tap', 'node', (event: any) => {
-      const node = graph.nodes.find(n => n.node_id === event.target.id());
+      const node = graph.nodes.find(n => n.node_id === event.target.id()) || (event.target.data('isTheme') ? { node_id: event.target.id(), normalized_statement: event.target.data('fullText'), primary_type: 'THEME', sources: event.target.data('sources') as Source[] } : null);
       if (!node) return;
       setDetails({
         title: node.normalized_statement,
         paragraphs: ['Node ' + node.node_id + ' · ' + node.primary_type + ' · ' + categoryFor(node).label],
         quotes: node.sources.map(s => ({
-          meta: 'Group: ' + (graph.groups.find(g => g.id === s.group_id)?.name || s.group_id || 'Unknown') +
-            ' · Source: ' + (s.source_kind === 'manual' ? 'Student-written point' : 'Recorded transcription') + ' · Speaker: ' + (s.speaker_id || 'Unknown') +
-            ' · Time: ' + (s.timestamp || 'Not provided'),
+          meta: (() => { const i = graph.groups.findIndex(g => g.id === s.group_id); const g = graph.groups[i]; return g ? 'G' + (i + 1) + ' · ' + g.name + (g.members?.length ? ' · ' + g.members.join(', ') : '') : s.group_id || 'Unknown group'; })(),
           quote: s.original_quote
         }))
       });
@@ -156,15 +153,6 @@ export default function ArgumentMapPage() {
     }
   }
 
-  async function generateThematic() {
-    requestVersion.current++; setLoading(true); setError('');
-    try {
-      const response = await fetch(API_BASE + '/api/rooms/' + encodeURIComponent(roomCode) + '/thematic-analysis', { method: 'POST', credentials: 'include' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Unable to queue thematic analysis');
-      applyStatus(result);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to generate thematic analysis'); setLoading(false); }
-  }
 
   function exportJSON() {
     if (!graph) return;
@@ -193,7 +181,7 @@ export default function ArgumentMapPage() {
             <div><strong>Teacher Topic</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.teacher_topic || 'No topic saved for this room'}</p></div>
             <div><strong>Discussion Instructions</strong><p className="mt-1 whitespace-pre-wrap text-slate-600">{room?.discussion_instructions || 'None provided'}</p></div>
           </div>
-          <p className="text-xs text-slate-500">The analysis uses saved session information, original transcripts and student-written points. No additional fields are required.</p>
+          <p className="text-xs text-slate-500">Clean transcripts → extract claims → group themes → analyze support / against → draw the map.</p>
           <DiscussionInstructions roomCode={roomCode} editable />
           <details className="text-sm border rounded-lg p-3">
             <summary className="cursor-pointer font-semibold">Input: All Groups’ Original Contributions ({inputGroups.length} groups)</summary>
@@ -217,7 +205,7 @@ export default function ArgumentMapPage() {
           <div className="flex flex-wrap gap-3 items-center justify-between mb-4">
             <div>
               <h2 className="font-bold text-lg">Interactive Argument Map</h2>
-              <p className="text-xs text-slate-500">{graph ? graph.nodes.length + ' nodes · ' + graph.edges.length + ' relationships' + (graph.generation?.mode === 'extractive_fallback' ? ' · Original-excerpt fallback' : '') : 'No graph generated yet'}</p>
+              <p className="text-xs text-slate-500">{graph ? graph.nodes.length + ' claims · ' + (graph.themes?.length || 0) + ' themes · ' + graph.edges.length + ' relationships' + (graph.generation?.mode === 'extractive_fallback' ? ' · Original-excerpt fallback' : '') : 'No graph generated yet'}</p>
             </div>
             <div className="flex gap-2 flex-wrap items-center">
               <select aria-label="Highlight group" className="border rounded-lg p-2 text-sm" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
@@ -232,7 +220,7 @@ export default function ArgumentMapPage() {
           <ArgumentMapLegend />
           <div ref={container} className="w-full rounded-xl border border-slate-200 bg-white" style={{ height: 550 }} role="img" aria-label="Interactive argument network" />
           {graph && !graph.nodes.length && <p className="text-sm text-slate-600 mt-3">No substantive argument statements were identified. The original transcripts remain available in the input panel; no arguments or relationships have been invented.</p>}
-          <p className="text-xs text-slate-500 mt-3">SUPPORTS → directed · ATTACKS → directed · SIMILAR_TO — undirected. Relationship labels appear on each edge. Click a node or edge to inspect its sources.</p>
+          <p className="text-xs text-slate-500 mt-3">support → directed · against → directed. Click a claim or connection to inspect the original sources.</p>
           <div className="mt-4 p-4 bg-slate-50 rounded-lg min-h-[95px] text-sm">
             {details ? <>
               <h3 className="font-bold mb-2">{details.title}</h3>
@@ -244,7 +232,6 @@ export default function ArgumentMapPage() {
           </div>
         </section>
       </div>
-      <div className="max-w-screen-2xl mx-auto mt-5 rounded-xl border border-slate-200 bg-white p-5"><ThematicAnalysis analysis={graph?.thematic_analysis} onGenerate={() => void generateThematic()} busy={loading} stage={job?.thematic_requested ? job.stage : undefined} /></div>
     </main>
   );
 }

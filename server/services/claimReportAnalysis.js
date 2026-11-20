@@ -262,4 +262,4 @@ function publicClaimGraph(graph) {
   return { nodes: graph.nodes, edges: graph.edges, groups: graph.groups, claim_analysis: graph.claim_analysis,
     thematic_analysis: graph.thematic_analysis, generation: graph.generation, input: graph.input };
 }
-module.exports = { analyzeClaimReport, publicClaimGraph, numberAndRank, supportGraph, METHOD_VERSION, analysisSchemas };
+module.exports = { analyzeClaimReport, publicClaimGraph, numberAndRank, supportGraph, METHOD_VERSION, analysisSchemas, originalSources, resolveMention, uniqueSources };

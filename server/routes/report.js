@@ -6,6 +6,18 @@ const { requireInstructor } = require('../services/instructorAuth');
 const { reportFromMap } = require('../services/reportFromMap');
 const { readSession } = require('../services/reportStore');
 const { METHOD_VERSION } = require('../services/claimReportAnalysis');
+const { transcriptionDownload } = require('../services/transcriptionDownload');
+
+router.get('/:code/transcription', requireInstructor, async (req, res) => {
+  if (!/^\d{6}$/.test(req.params.code)) return res.status(400).json({ error: 'Invalid room code' });
+  try {
+    const session = await readSession(req.params.code);
+    if (!session) return res.status(404).json({ error: 'Room not found' });
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Disposition', 'attachment; filename="discussion-transcription-' + req.params.code + '.txt"');
+    res.type('text/plain; charset=utf-8').send(transcriptionDownload(session));
+  } catch (error) { console.error('Download transcription:', error.message); res.status(500).json({ error: 'Unable to download transcriptions.' }); }
+});
 
 async function readReport(code) {
   const current = await readSession(code);

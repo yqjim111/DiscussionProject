@@ -156,6 +156,8 @@ mock('../services/claimReportAnalysis', {
   publicClaimGraph: graph => graph,
 });
 
+mock('../services/simpleArgumentAnalysis', { analyzeSimpleArgumentMap: input => require('../services/discussionAnalysis').analyzeDiscussion(input), publicSimpleGraph: graph => graph, METHOD_VERSION: 'cleaned-discussion-v2' });
+
 const { originalQuote, validateGraph } = require('../services/argumentMap');
 const { server, io } = require('../index');
 let base;

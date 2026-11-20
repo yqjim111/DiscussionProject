@@ -1,5 +1,7 @@
 # Generate Report: discussion-specific analysis
 
+Historical workflow: the Generate Report UI has been removed. See the [current transcription-download and Argument Map workflow](simple-argument-map.md). Existing report tooling remains available for backward compatibility.
+
 The default pipeline is `discussion-report-v5`. The instructor's **Generate Report** button and dashboard report link use the same durable background job and the same renderer as the exported HTML. Both the frontend and backend must be deployed together.
 
 ## Automatic stages

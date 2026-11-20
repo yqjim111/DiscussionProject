@@ -48,7 +48,7 @@ app.use('/api/groups/:groupId/points', express.json({ limit: Infinity }));
 app.use(express.json());
 
 // Health check — used by Railway to confirm the server is alive
-app.get('/health', (_req, res) => res.json({ status: 'ok', report_pipeline: require('./services/claimReportAnalysis').METHOD_VERSION }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', report_pipeline: require('./services/claimReportAnalysis').METHOD_VERSION, argument_map_pipeline: require('./services/simpleArgumentAnalysis').METHOD_VERSION }));
 app.post('/api/instructor/login', login);
 
 // ── API routes ────────────────────────────────────────────────────────────────
